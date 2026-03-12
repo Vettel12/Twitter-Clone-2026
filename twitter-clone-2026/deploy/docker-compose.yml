@@ -1,0 +1,54 @@
+version: '3.11'
+
+services:
+  # --- 1. База данных PostgreSQL ---
+  postgres:
+    image: postgres:16-alpine
+    container_name: twitter_clone_db
+    restart: unless-stopped
+    env_file:
+      - ../.env # Берем креды из корневого .env файла
+    environment:
+      # Переменные, которые использует официальный образ Postgres
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432" # Открываем порт, чтобы можно было подключиться с хоста (DBeaver, pgAdmin)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # Проверка "живости" базы, чтобы приложение не упало при старте
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      retries: 5
+
+  # --- 2. Основное приложение (Backend) ---
+  app:
+    build:
+      context: .. # Указываем, что контекст сборки - это корень проекта
+      dockerfile: Dockerfile
+    container_name: twitter_clone_app
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      # !!! ВАЖНЫЙ МОМЕНТ !!!
+      # Внутри Docker контейнеры общаются по именам сервисов.
+      # Поэтому мы переопределяем хост с 'localhost' на 'postgres'.
+      POSTGRES_HOST: postgres
+    ports:
+      - "8000:8000" # Swagger будет доступен на http://localhost:8000
+    depends_on:
+      postgres:
+        condition: service_healthy # Ждем, пока база полностью поднимется
+    volumes:
+      # Монтируем код для "Hot Reload" (чтобы изменения в коде применялись без пересборки)
+      - ../services:/app/services
+      - ../libs:/app/libs
+      - ../tests:/app/tests
+      # Папка для медиа файлов (картинок твитов)
+      - ../media:/app/media
+
+volumes:
+  postgres_data:
