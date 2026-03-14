@@ -134,3 +134,6 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "raise NotImplementedError",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["libs", "services"]
