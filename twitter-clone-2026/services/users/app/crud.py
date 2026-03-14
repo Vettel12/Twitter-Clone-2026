@@ -1,6 +1,8 @@
+from typing import cast
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
+from sqlalchemy.engine import CursorResult
 from .models import User, Follower
 
 
@@ -76,7 +78,7 @@ async def unfollow_user(db: AsyncSession, follower_id: int, followed_id: int) ->
         Follower.followed_id == followed_id
     )
 
-    result = await db.execute(stmt)
+    result = cast(CursorResult, await db.execute(stmt))
     await db.commit()
     # result.rowcount показывает, сколько строк было удалено
     return result.rowcount > 0

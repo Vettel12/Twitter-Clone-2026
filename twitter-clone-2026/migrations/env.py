@@ -15,6 +15,8 @@ from libs.database import Base
 # Alembic должен "увидеть" их, чтобы создать таблицы.
 # Даже если PyCharm подсвечивает серым - это обязательно.
 from services.users.app.models import User, Follower  # noqa
+from services.tweets.app.models import Tweet, Like  # noqa
+
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -4,33 +4,38 @@ from typing import Optional
 
 from libs.database import get_db
 from services.users.app import crud, schemas
-
+from services.users.app.models import User
 
 router = APIRouter()
 
-# Зависимость для получения текущего пользователя
+
+# --- Зависимость для авторизации ---
 async def get_current_user(
     api_key: Optional[str] = Header(None, alias="api-key"),
     db: AsyncSession = Depends(get_db)
-    ):
+) -> User:
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing API Key")
     
     user = await crud.get_user_by_api_key(db, api_key)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid API Key")
-    
     return user
+
+
+# --- Эндпоинты ---
 
 @router.get("/api/users/me", response_model=schemas.UserOut)
 async def get_me(
-    user = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     # Обновляем данные пользователя с загрузкой связей
-    # (так как в get_current_user мы их не грузили для экономии)
     full_user = await crud.get_user_by_id(db, user.id)
-    return schemas.UserOut(user=full_user)
+    
+    # Явно валидируем и преобразуем User -> UserResponse
+    user_response = schemas.UserResponse.model_validate(full_user)
+    return schemas.UserOut(user=user_response)
 
 
 @router.get("/api/users/{user_id}", response_model=schemas.UserOut)
@@ -40,18 +45,22 @@ async def get_user_profile(
 ):
     user = await crud.get_user_by_id(db, user_id)
     if not user:
+        # Возвращаем словарь, FastAPI сам превратит его в JSON
         return {
             "result": False,
             "error_type": "NotFoundError",
             "error_message": "User not found"
         }
-    return schemas.UserOut(user=user)
+    
+    # Явно валидируем User -> UserResponse
+    user_response = schemas.UserResponse.model_validate(user)
+    return schemas.UserOut(user=user_response)
 
 
 @router.post("/api/users/{user_id}/follow")
 async def follow_user(
     user_id: int,
-    current_user = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     success = await crud.follow_user(db, current_user.id, user_id)
@@ -69,7 +78,7 @@ async def follow_user(
 @router.delete("/api/users/{user_id}/follow")
 async def unfollow_user(
     user_id: int,
-    current_user = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     success = await crud.unfollow_user(db, current_user.id, user_id)

@@ -1,7 +1,9 @@
 from libs.database import Base
-from typing import List, Optional
+from typing import List, TYPE_CHECKING
 from sqlalchemy import String, Integer, ForeignKey, Boolean, DateTime, UniqueConstraint
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+if TYPE_CHECKING:
+    from services.tweets.app.models import Tweet, Like
 
 
 class User(Base):
@@ -30,6 +32,12 @@ class User(Base):
         back_populates="followers",
         viewonly=True,
     )
+
+    # Связь с твитами пользователя
+    tweets: Mapped[List["Tweet"]] = relationship(back_populates="author")
+
+    # Связь с лайками пользователя
+    likes: Mapped[List["Like"]] = relationship(back_populates="user")
 
 
 class Follower(Base):

@@ -38,6 +38,7 @@ dependencies = [
     
     # Utils
     "python-multipart>=0.0.12", # Для загрузки файлов
+    "aiofiles>=24.1.0", # Асинхронное файловое чтение/запись
 ]
 
 [project.optional-dependencies]
