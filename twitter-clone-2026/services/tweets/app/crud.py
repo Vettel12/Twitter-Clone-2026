@@ -4,12 +4,17 @@ from typing import List, Optional, cast
 from pathlib import Path
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import update, delete, select
+from sqlalchemy import update, delete, select, func, or_, desc
 from sqlalchemy.engine import CursorResult
+from sqlalchemy.orm import selectinload
+
 from .models import Media, Tweet, Like
+# Импорты из других сервисов
+from services.users.app.models import Follower
 
 
-# Сохраняет файл на диск и создает запись в БД
+# --- MEDIA ---
+
 async def save_media(db: AsyncSession, file: UploadFile) -> int:
     """
     Сохраняет файл на диск и создает запись в БД.
@@ -43,7 +48,8 @@ async def save_media(db: AsyncSession, file: UploadFile) -> int:
     return db_media.id
 
 
-# Создание связи между твитом и медиа-файлом
+# --- TWEETS ---
+
 async def create_tweet(
     db: AsyncSession, 
     author_id: int, 
@@ -79,6 +85,80 @@ async def create_tweet(
     
     return new_tweet.id
 
+
+async def delete_tweet(db: AsyncSession, user_id: int, tweet_id: int) -> bool:
+    """
+    Удаляет твит, если пользователь — автор.
+    
+    SQL Equivalent:
+    1. SELECT * FROM tweets WHERE id = :tweet_id;
+    2. DELETE FROM tweets WHERE id = :tweet_id;
+    """
+    # Находим твит
+    result = await db.execute(
+        select(Tweet).where(Tweet.id == tweet_id)
+    )
+    tweet = result.scalar_one_or_none()
+    
+    if not tweet:
+        return False
+    
+    # Проверка прав
+    if tweet.author_id != user_id:
+        raise PermissionError("Вы не можете удалить чужой твит")
+
+    await db.delete(tweet)
+    await db.commit()
+    return True
+
+
+async def get_feed(db: AsyncSession, user_id: int, limit: int = 100) -> List[Tweet]:
+    """
+    Получает ленту твитов для пользователя с комплексной сортировкой.
+    
+    Логика выборки:
+    1. Выбираются твиты авторов, на которых подписан текущий пользователь.
+    2. Добавляются собственные твиты текущего пользователя.
+    3. Сортировка: по лайкам, затем по дате.
+    """
+    # 1. Подзапрос для подсчета лайков
+    likes_count = (
+        select(Like.tweet_id, func.count(Like.user_id).label("count"))
+        .group_by(Like.tweet_id)
+        .subquery()
+    )
+
+    # 2. Основной запрос
+    stmt = (
+        select(Tweet)
+        .options(
+            selectinload(Tweet.author),
+            selectinload(Tweet.media),
+            selectinload(Tweet.likes).selectinload(Like.user) 
+        )
+        # JOIN с таблицей подписок
+        .join(Follower, Follower.followed_id == Tweet.author_id, isouter=True)
+        # LEFT JOIN с подзапросом лайков
+        .outerjoin(likes_count, likes_count.c.tweet_id == Tweet.id)
+        # Фильтр: подписки ИЛИ мои твиты
+        .where(
+            or_(
+                Follower.follower_id == user_id,
+                Tweet.author_id == user_id
+            )
+        )
+        # Сортировка
+        .order_by(desc(likes_count.c.count), desc(Tweet.created_at))
+        .limit(limit)
+    )
+
+    result = await db.execute(stmt)
+    tweets = result.scalars().unique().all()
+    
+    return list(tweets)
+
+
+# --- LIKES ---
 
 async def add_like(db: AsyncSession, user_id: int, tweet_id: int) -> bool:
     """
@@ -117,32 +197,7 @@ async def remove_like(db: AsyncSession, user_id: int, tweet_id: int) -> bool:
         Like.user_id == user_id, 
         Like.tweet_id == tweet_id
     )
+    # При выполнении DELETE SQLAlchemy возвращает объект с атрибутом rowcount
     result = cast(CursorResult, await db.execute(stmt))
     await db.commit()
     return result.rowcount > 0
-
-
-async def delete_tweet(db: AsyncSession, user_id: int, tweet_id: int) -> bool:
-    """
-    Удаляет твит, если пользователь — автор.
-    
-    SQL Equivalent:
-    1. SELECT * FROM tweets WHERE id = :tweet_id;
-    2. DELETE FROM tweets WHERE id = :tweet_id;
-    """
-    # Находим твит
-    result = await db.execute(
-        select(Tweet).where(Tweet.id == tweet_id)
-    )
-    tweet = result.scalar_one_or_none()
-    
-    if not tweet:
-        return False
-    
-    # Проверка прав
-    if tweet.author_id != user_id:
-        raise PermissionError("Вы не можете удалить чужой твит")
-
-    await db.delete(tweet)
-    await db.commit()
-    return True

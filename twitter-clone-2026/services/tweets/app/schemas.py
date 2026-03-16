@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List
+from datetime import datetime
 
 # --- Вспомогательные схемы (для вложенности) ---
 
@@ -25,7 +26,7 @@ class TweetCreate(BaseModel):
     """Входящие данные при создании твита (POST /api/tweets)."""
     # Имена полей строго по ТЗ
     tweet_data: str = Field(..., description="Текст твита")
-    tweet_media_ids: Optional[List[int]] = Field(
+    tweet_media_ids: List[int] = Field(
         default_factory=list, 
         description="Список ID загруженных картинок"
     )
@@ -49,9 +50,10 @@ class TweetOut(BaseModel):
     Структура строго по ТЗ.
     """
     id: int
-    content: str = Field(..., alias="tweet_data") # В коде поле content, в JSON будет tweet_data
+    content: str = Field(..., alias="tweet_data")
+    created_at: datetime  # Добавляем дату
     author: UserInTweet
-    attachments: List[str] = Field(default_factory=list) # Список ссылок на картинки
+    attachments: List[str] = Field(default_factory=list)
     likes: List[LikeInTweet] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

@@ -107,3 +107,41 @@ async def unlike_tweet(
     if not success:
         return {"result": False, "error_message": "Like not found"}
     return {"result": True}
+
+
+@router.get("/api/tweets", response_model=schemas.TweetListResponse)
+async def get_tweet_feed(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Эндпоинт получения ленты твитов.
+    """
+    # 1. Получаем модели из базы
+    tweets_orm = await crud.get_feed(db, user.id)
+    
+    # 2. Явно преобразуем ORM-модели в Pydantic-схемы
+    tweets_list = []
+    for tweet in tweets_orm:
+        # Преобразуем лайки: достаем имя из связи user
+        likes_list = [
+            schemas.LikeInTweet(user_id=like.user_id, name=like.user.name)
+            for like in tweet.likes
+        ]
+        
+        # Преобразуем аттачменты: достаем путь из связи media
+        attachments_list = [media.file_path for media in tweet.media]
+
+        # Собираем объект схемы
+        tweet_out = schemas.TweetOut(
+            id=tweet.id,
+            tweet_data=tweet.content,
+            created_at=tweet.created_at,
+            author=schemas.UserInTweet.model_validate(tweet.author),
+            attachments=attachments_list,
+            likes=likes_list
+            )
+        tweets_list.append(tweet_out)
+
+    # 3. Возвращаем ответ
+    return schemas.TweetListResponse(tweets=tweets_list)

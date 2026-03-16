@@ -1,6 +1,7 @@
+from datetime import datetime
 from libs.database import Base
 from typing import List, Optional, TYPE_CHECKING
-from sqlalchemy import String, Integer, ForeignKey, Text, PrimaryKeyConstraint
+from sqlalchemy import String, ForeignKey, Text, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 # Импортируем модель User, чтобы SQLAlchemy понимал связь
 if TYPE_CHECKING:
@@ -21,6 +22,20 @@ class Tweet(Base):
     
     # ID автора, ссылка на таблицу users
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+
+    # Автоматическая установка времени создания при добавлении в БД
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), 
+        server_default=func.now(),
+        nullable=False
+    )
+    # Автоматическое обновление времени при изменении записи
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), 
+        server_default=func.now(), 
+        onupdate=func.now(),
+        nullable=False
+    )
     
     # Связь с объектом автора. back_populates указывает на поле "tweets" в модели User
     author: Mapped["User"] = relationship(back_populates="tweets")
