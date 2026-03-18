@@ -1,0 +1,51 @@
+# Определяем стадии (порядок выполнения)
+stages:
+  - lint
+  - test
+
+# Переменные окружения, доступные во всех джобах
+variables:
+  POSTGRES_DB: twitter_clone_db_test
+  POSTGRES_USER: skillbox
+  POSTGRES_PASSWORD: skillbox_password
+  POSTGRES_HOST: postgres  # Имя сервиса базы данных
+  POSTGRES_PORT: "5432"
+  SECRET_KEY: test_secret_key_for_ci
+
+# --- STAGE: LINT ---
+linting:
+  stage: lint
+  image: python:3.13
+  before_script:
+    - pip install -e .[dev]
+  script:
+    - ruff check .
+    - ruff format --check .
+    - mypy .
+
+# --- STAGE: TEST ---
+tests:
+  stage: test
+  image: python:3.13
+  
+  # Подключаем сервис PostgreSQL
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  
+  before_script:
+    # Устанавливаем зависимости
+    - pip install -e .[dev]
+    # Создаем .env файл, чтобы наш Settings() увидел переменные
+    # (GitLab CI injects variables as env vars, but pydantic-settings reads them automatically.
+    # However, creating .env ensures 100% compatibility with our config)
+    - |
+      echo "POSTGRES_DB=$POSTGRES_DB" >> .env
+      echo "POSTGRES_USER=$POSTGRES_USER" >> .env
+      echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" >> .env
+      echo "POSTGRES_HOST=$POSTGRES_HOST" >> .env
+      echo "POSTGRES_PORT=$POSTGRES_PORT" >> .env
+      echo "SECRET_KEY=$SECRET_KEY" >> .env
+
+  script:
+    - pytest -v --cov=. --cov-report=term-missing
