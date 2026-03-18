@@ -33,5 +33,11 @@ COPY --from=builder /app .
 # Создаем папку для медиа
 RUN mkdir -p /app/media
 
+# Копируем скрипт запуска
+COPY start.sh .
+
+# Даем права на исполнение (важно для Linux контейнеров)
+RUN chmod +x start.sh
+
 # Команда запуска
-CMD ["uvicorn", "services.gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./start.sh"]

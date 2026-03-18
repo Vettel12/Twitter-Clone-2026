@@ -32,8 +32,8 @@ dependencies = [
     "alembic>=1.13.0",       # Миграции
     "greenlet>=3.1.0",       # Нужен для SQLAlchemy async
     
-    # Kafka & Redis (подготовка к 2-й неделе)
-    "aiokafka>=0.11.0",
+    # faststream & Redis (подготовка к 2-й неделе)
+    "faststream[kafka]>=0.5.0",
     "redis>=5.1.0",
     
     # Utils

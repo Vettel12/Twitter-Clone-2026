@@ -1,54 +1,80 @@
-version: '3.11'
+version: '3.8'
 
 services:
-  # --- 1. База данных PostgreSQL ---
-  postgres:
-    image: postgres:16-alpine
-    container_name: twitter_clone_db
-    restart: unless-stopped
-    env_file:
-      - ../.env # Берем креды из корневого .env файла
-    environment:
-      # Переменные, которые использует официальный образ Postgres
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-      - "5432:5432" # Открываем порт, чтобы можно было подключиться с хоста (DBeaver, pgAdmin)
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      # Проверка "живости" базы, чтобы приложение не упало при старте
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      retries: 5
-
-  # --- 2. Основное приложение (Backend) ---
   app:
     build:
-      context: .. # Указываем, что контекст сборки - это корень проекта
+      context: ..
       dockerfile: Dockerfile
-    container_name: twitter_clone_app
-    restart: unless-stopped
+    ports:
+      - "8000:8000"
     env_file:
       - ../.env
-    environment:
-      # !!! ВАЖНЫЙ МОМЕНТ !!!
-      # Внутри Docker контейнеры общаются по именам сервисов.
-      # Поэтому мы переопределяем хост с 'localhost' на 'postgres'.
-      POSTGRES_HOST: postgres
-    ports:
-      - "8000:8000" # Swagger будет доступен на http://localhost:8000
     depends_on:
-      postgres:
-        condition: service_healthy # Ждем, пока база полностью поднимется
+      - postgres
+      - redis
+      - kafka
+    restart: always
+    networks:
+      - app-network
     volumes:
-      # Монтируем код для "Hot Reload" (чтобы изменения в коде применялись без пересборки)
-      - ../services:/app/services
-      - ../libs:/app/libs
-      - ../tests:/app/tests
-      # Папка для медиа файлов (картинок твитов)
       - ../media:/app/media
+
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - ../.env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - app-network
+
+  # === KAFKA INFRASTRUCTURE (Сервисы, не volumes!) ===
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - app-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    networks:
+      - app-network
+
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    depends_on:
+      - kafka
+    ports:
+      - "9000:9000"
+    environment:
+      KAFKA_BROKERCONNECT: "kafka:29092"
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
 
 volumes:
   postgres_data:
+  
