@@ -1,9 +1,12 @@
-from libs.database import Base
-from typing import List, TYPE_CHECKING
-from sqlalchemy import String, Integer, ForeignKey, Boolean, DateTime, UniqueConstraint
+from typing import TYPE_CHECKING, List
+
+from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from libs.database import Base
+
 if TYPE_CHECKING:
-    from services.tweets.app.models import Tweet, Like
+    from services.tweets.app.models import Like, Tweet
 
 
 class User(Base):
@@ -45,6 +48,7 @@ class Follower(Base):
     Ассоциативная таблица для связи Многие-ко-Многим.
     Здесь мы храним сами связи.
     """
+
     __tablename__ = "followers"
 
     # Составной первичный ключ из follower_id и followed_id
@@ -52,4 +56,6 @@ class Follower(Base):
     followed_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
 
     # Уникальное ограничение, чтобы один пользователь не мог подписаться на другого более одного раза
-    __table_args__ = (UniqueConstraint('follower_id', 'followed_id', name='unique_follow'),)
+    __table_args__ = (
+        UniqueConstraint("follower_id", "followed_id", name="unique_follow"),
+    )

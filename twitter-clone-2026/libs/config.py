@@ -1,5 +1,5 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     Класс настроек приложения.
     Автоматически читает переменные окружения из файла .env.
     """
+
     # Настройки базы данных PostgreSQL
     # Field(...) означает, что поле обязательное
     postgres_user: str = Field(..., alias="POSTGRES_USER")
@@ -44,8 +45,8 @@ class Settings(BaseSettings):
             f"{self.postgres_host}:{self.postgres_port}/"
             f"{self.postgres_db}"
         )
-    
+
+
 # Создаем глобальный экземпляр настроек.
 # Теперь в любом месте кода можно сделать: from libs.config import settings
 settings = Settings()
-      

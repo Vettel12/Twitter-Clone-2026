@@ -1,10 +1,11 @@
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
+
+from services.tweets.app import router as tweets_router
 
 # Импортируем роутеры из наших сервисов
 from services.users.app import router as users_router
-from services.tweets.app import router as tweets_router
 
 # Создаем экземпляр приложения
 app = FastAPI(
@@ -29,7 +30,7 @@ app.include_router(tweets_router)
 
 
 @app.get("/", tags=["Root"])
-async def root():
+async def root() -> dict[str, str]:
     """
     Корневой эндпоинт для проверки, что сервер жив.
     """

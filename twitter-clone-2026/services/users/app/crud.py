@@ -1,9 +1,11 @@
-from typing import cast
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
-from sqlalchemy.orm import selectinload
+from typing import Any, cast
+
+from sqlalchemy import delete, select
 from sqlalchemy.engine import CursorResult
-from .models import User, Follower
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from .models import Follower, User
 
 
 # 1. Получение информации о свем профиле
@@ -28,10 +30,7 @@ async def get_user_by_id(db: AsyncSession, user_id: int) -> User | None:
     """
     query = (
         select(User)
-        .options(
-            selectinload(User.followers),
-            selectinload(User.following)
-        )
+        .options(selectinload(User.followers), selectinload(User.following))
         .where(User.id == user_id)
     )
     result = await db.execute(query)
@@ -47,18 +46,16 @@ async def follow_user(db: AsyncSession, follower_id: int, followed_id: int) -> b
     # Проверка: пытается ли пользователь подписаться на самого себя
     if follower_id == followed_id:
         return False
-    
+
     # Проверяем, нет ли уже подписки
     existing = await db.execute(
         select(Follower).where(
-            Follower.follower_id == follower_id,
-            Follower.followed_id == followed_id
+            Follower.follower_id == follower_id, Follower.followed_id == followed_id
         )
     )
 
     if existing.scalar_one_or_none():
         return False  # Уже подписан
-    
 
     # Создаем связь
     new_follow = Follower(follower_id=follower_id, followed_id=followed_id)
@@ -74,11 +71,10 @@ async def unfollow_user(db: AsyncSession, follower_id: int, followed_id: int) ->
     DELETE FROM followers WHERE follower_id = :follower_id AND followed_id = :followed_id
     """
     stmt = delete(Follower).where(
-        Follower.follower_id == follower_id,
-        Follower.followed_id == followed_id
+        Follower.follower_id == follower_id, Follower.followed_id == followed_id
     )
 
-    result = cast(CursorResult, await db.execute(stmt))
+    result = cast(CursorResult[Any], await db.execute(stmt))
     await db.commit()
     # result.rowcount показывает, сколько строк было удалено
     return result.rowcount > 0

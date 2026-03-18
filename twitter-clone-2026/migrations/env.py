@@ -2,11 +2,10 @@ import asyncio
 import sys
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
-
-from alembic import context
 
 # --- FIX FOR PYTHON 3.13 + WINDOWS ---
 if sys.platform == "win32":
@@ -18,8 +17,6 @@ from libs.config import settings
 from libs.database import Base
 
 # Импортируем модели, чтобы Alembic их увидел
-from services.users.app.models import User, Follower
-from services.tweets.app.models import Tweet, Media, Like
 
 config = context.config
 

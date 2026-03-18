@@ -1,5 +1,3 @@
-import os
-
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
@@ -10,7 +8,6 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from libs.config import settings
-
 
 # 1. Создаем асинхронный движок
 # echo=True выводит SQL запросы в консоль (полезно для отладки, в продакшене лучше False)
@@ -25,6 +22,7 @@ AsyncSessionLocal = async_sessionmaker(
     engine,
     expire_on_commit=False,
 )
+
 
 # 3. Базовый класс для моделей
 class Base(DeclarativeBase):
