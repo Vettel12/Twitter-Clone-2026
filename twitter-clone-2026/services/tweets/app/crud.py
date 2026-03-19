@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from libs.kafka_conf import TOPIC_TWEETS, broker
 from libs.schemas import TweetData
+from libs.redis_client import get_redis
 from services.users.app.models import Follower
 
 from .models import Like, Media, Tweet
@@ -75,7 +76,16 @@ async def create_tweet(
         await db.execute(stmt)
 
     await db.commit()
-    logger.info(f"Tweet {new_tweet.id} saved to DB")
+
+    # === INVALIDATE CACHE ===
+    
+    try:
+        r = await get_redis()
+        await r.delete(f"feed:{author_id}")
+        logger.info(f"Cache invalidated for user {author_id}")
+    except Exception as e:
+        logger.error(f"Redis error: {e}")
+    # =========================
 
     # === FASTSTREAM PRODUCER ===
     try:

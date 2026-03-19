@@ -1,25 +1,26 @@
+import logging
+import json
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.database import get_db
+from libs.redis_client import get_redis
 from services.tweets.app import crud, schemas
 from services.users.app.crud import get_user_by_api_key
 from services.users.app.models import User
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
-# --- Зависимость для авторизации (повторяем логику из users) ---
+# --- Зависимость для авторизации ---
 async def get_current_user(
     db: Annotated[AsyncSession, Depends(get_db)],
     api_key: Annotated[Optional[str], Header(alias="api-key")] = None,
 ) -> User:
-    """
-    Извлекает пользователя по заголовку api-key.
-    Кидает 401 если ключа нет или он неверный.
-    """
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing API Key")
 
@@ -38,10 +39,9 @@ async def upload_media(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Any:
-    """
-    Загрузка картинки.
-    """
+    logger.info(f"User {user.id} uploading media: {file.filename}")
     media_id = await crud.save_media(db, file)
+    logger.info(f"Media saved with ID: {media_id}")
     return schemas.MediaUploadResponse(media_id=media_id)
 
 
@@ -51,15 +51,14 @@ async def create_tweet(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Any:
-    """
-    Создание твита.
-    """
+    logger.info(f"User {user.id} creating tweet with content: '{tweet_data.tweet_data[:20]}...'")
     tweet_id = await crud.create_tweet(
         db,
         author_id=user.id,
         content=tweet_data.tweet_data,
         media_ids=tweet_data.tweet_media_ids,
     )
+    logger.info(f"Tweet {tweet_id} created successfully by user {user.id}")
     return schemas.TweetCreateResponse(tweet_id=tweet_id)
 
 
@@ -69,19 +68,20 @@ async def delete_tweet(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    """
-    Удаление твита. Только автор может удалять.
-    """
+    logger.info(f"User {user.id} attempting to delete tweet {tweet_id}")
     try:
         success = await crud.delete_tweet(db, user.id, tweet_id)
         if not success:
+            logger.warning(f"Tweet {tweet_id} not found for deletion")
             return {
                 "result": False,
                 "error_type": "NotFoundError",
                 "error_message": "Tweet not found",
             }
+        logger.info(f"Tweet {tweet_id} deleted by user {user.id}")
         return {"result": True}
     except PermissionError as e:
+        logger.warning(f"Permission denied for user {user.id} on tweet {tweet_id}: {e}")
         return {
             "result": False,
             "error_type": "PermissionError",
@@ -95,16 +95,16 @@ async def like_tweet(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    """
-    Поставить лайк.
-    """
+    logger.info(f"User {user.id} liking tweet {tweet_id}")
     success = await crud.add_like(db, user.id, tweet_id)
     if not success:
+        logger.warning(f"Failed like: User {user.id} tweet {tweet_id} (already liked or not found)")
         return {
             "result": False,
             "error_type": "ActionError",
             "error_message": "Cannot like tweet (already liked or not found)",
         }
+    logger.info(f"User {user.id} liked tweet {tweet_id}")
     return {"result": True}
 
 
@@ -114,16 +114,16 @@ async def unlike_tweet(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    """
-    Убрать лайк.
-    """
+    logger.info(f"User {user.id} unliking tweet {tweet_id}")
     success = await crud.remove_like(db, user.id, tweet_id)
     if not success:
+        logger.warning(f"Failed unlike: User {user.id} tweet {tweet_id} (not found)")
         return {
             "result": False,
             "error_type": "ActionError",
             "error_message": "Like not found",
         }
+    logger.info(f"User {user.id} unliked tweet {tweet_id}")
     return {"result": True}
 
 
@@ -133,24 +133,30 @@ async def get_tweet_feed(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Any:
     """
-    Эндпоинт получения ленты твитов.
+    Эндпоинт получения ленты твитов с кешированием.
     """
-    # 1. Получаем модели из базы
-    tweets_orm = await crud.get_feed(db, user.id)
+    r = await get_redis()
+    cache_key = f"feed:{user.id}"
 
-    # 2. Явно преобразуем ORM-модели в Pydantic-схемы
+    # 1. Пробуем достать из кеша
+    cached_data = await r.get(cache_key)
+    if cached_data:
+        logger.info(f"Cache HIT for user {user.id}")
+        return schemas.TweetListResponse.model_validate_json(cached_data)
+
+    logger.info(f"Cache MISS for user {user.id}. Querying DB...")
+    
+    # 2. Если нет — идем в БД
+    tweets_orm = await crud.get_feed(db, user.id)
+    
     tweets_list = []
     for tweet in tweets_orm:
-        # Преобразуем лайки: достаем имя из связи user
         likes_list = [
             schemas.LikeInTweet(user_id=like.user_id, name=like.user.name)
             for like in tweet.likes
         ]
-
-        # Преобразуем аттачменты: достаем путь из связи media
         attachments_list = [media.file_path for media in tweet.media]
 
-        # Собираем объект схемы
         tweet_out = schemas.TweetOut(
             id=tweet.id,
             content=tweet.content,
@@ -161,5 +167,10 @@ async def get_tweet_feed(
         )
         tweets_list.append(tweet_out)
 
-    # 3. Возвращаем ответ
-    return schemas.TweetListResponse(tweets=tweets_list)
+    response_obj = schemas.TweetListResponse(tweets=tweets_list)
+
+    # 3. Сохраняем в кеш на 60 секунд
+    await r.set(cache_key, response_obj.model_dump_json(), ex=60)
+    logger.info(f"Feed for user {user.id} cached for 60s")
+
+    return response_obj

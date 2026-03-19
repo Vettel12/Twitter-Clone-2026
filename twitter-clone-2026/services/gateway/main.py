@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 # Импортируем брокера
 from libs.kafka_conf import broker
+from libs.redis_client import close_redis
 
 # Импортируем роутеры
 from services.tweets.app import router as tweets_router
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Stopping Kafka Broker connection...")
     # ИСПРАВЛЕНО: close() -> stop()
     await broker.stop()
+    await close_redis()
     logger.info("Kafka Broker stopped.")
 
 
