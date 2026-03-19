@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from libs.kafka_conf import TOPIC_TWEETS, broker
-from libs.schemas import TweetData
 from libs.redis_client import get_redis
+from libs.schemas import TweetData
 from services.users.app.models import Follower
 
 from .models import Like, Media, Tweet
@@ -78,7 +78,7 @@ async def create_tweet(
     await db.commit()
 
     # === INVALIDATE CACHE ===
-    
+
     try:
         r = await get_redis()
         await r.delete(f"feed:{author_id}")

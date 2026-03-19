@@ -1,5 +1,4 @@
 import logging
-import json
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
@@ -51,7 +50,9 @@ async def create_tweet(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Any:
-    logger.info(f"User {user.id} creating tweet with content: '{tweet_data.tweet_data[:20]}...'")
+    logger.info(
+        f"User {user.id} creating tweet with content: '{tweet_data.tweet_data[:20]}...'"
+    )
     tweet_id = await crud.create_tweet(
         db,
         author_id=user.id,
@@ -98,7 +99,9 @@ async def like_tweet(
     logger.info(f"User {user.id} liking tweet {tweet_id}")
     success = await crud.add_like(db, user.id, tweet_id)
     if not success:
-        logger.warning(f"Failed like: User {user.id} tweet {tweet_id} (already liked or not found)")
+        logger.warning(
+            f"Failed like: User {user.id} tweet {tweet_id} (already liked or not found)"
+        )
         return {
             "result": False,
             "error_type": "ActionError",
@@ -145,10 +148,10 @@ async def get_tweet_feed(
         return schemas.TweetListResponse.model_validate_json(cached_data)
 
     logger.info(f"Cache MISS for user {user.id}. Querying DB...")
-    
+
     # 2. Если нет — идем в БД
     tweets_orm = await crud.get_feed(db, user.id)
-    
+
     tweets_list = []
     for tweet in tweets_orm:
         likes_list = [
