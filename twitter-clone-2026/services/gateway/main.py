@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -85,4 +86,7 @@ async def root() -> dict[str, str]:
 
 
 if __name__ == "__main__":
-    uvicorn.run("services.gateway.main:app", host="0.0.0.0", port=8000, reload=True)
+    host = os.getenv("APP_HOST", "127.0.0.1")
+    port = int(os.getenv("APP_PORT", 8000))
+
+    uvicorn.run("services.gateway.main:app", host=host, port=port, reload=True)
