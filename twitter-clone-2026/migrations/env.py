@@ -18,8 +18,7 @@ from libs.database import Base
 
 # !!! ВАЖНО: Импортируем все модели, чтобы Alembic их увидел !!!
 # Если модели не импортированы, Base.metadata будет пустым, и миграция создастся пустой!
-from services.users.app.models import User, Follower
-from services.tweets.app.models import Tweet, Like, Media
+
 # ----------------------------------------------------------------
 
 config = context.config
