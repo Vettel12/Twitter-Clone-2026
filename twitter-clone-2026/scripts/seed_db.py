@@ -11,6 +11,8 @@ from sqlalchemy import select
 # !!! ВАЖНЫЙ ИМПОРТ: Загружаем модели, с которыми связан User, чтобы SQLAlchemy их увидел !!!
 from libs.database import AsyncSessionLocal
 from services.users.app.models import User
+from services.tweets.app.models import Tweet, Like, Media
+from services.users.app.models import Follower
 
 
 async def create_test_user() -> None:
