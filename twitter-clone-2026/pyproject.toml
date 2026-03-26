@@ -39,6 +39,8 @@ dependencies = [
     # Utils
     "python-multipart>=0.0.22", # For file uploads
     "aiofiles>=24.1.0",         # Async file I/O
+
+    "faker>=40.11.1",  # Для генерации тестовых данных
 ]
 
 [project.optional-dependencies]

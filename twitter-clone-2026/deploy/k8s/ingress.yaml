@@ -7,10 +7,18 @@ metadata:
     nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   rules:
-  - host: "twitter.local" # Можно заменить на реальный домен или IP
+  - host: "twitter.local"
     http:
       paths:
       - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-service  # Сначала идем в Nginx (Frontend)
+            port:
+              number: 80
+      # Если нужно прямое обращение к API без Nginx балансировки:
+      - path: /api
         pathType: Prefix
         backend:
           service:
