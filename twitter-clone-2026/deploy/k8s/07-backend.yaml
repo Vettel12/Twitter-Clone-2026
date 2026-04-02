@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: twitter-clone
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+      # === ДОБАВИТЬ ЭТОТ БЛОК ===
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+      # ==========================
+    spec:
+      securityContext:
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: wait-for-infrastructure
+          image: busybox:1.36
+          command: ['sh', '-c']
+          args:
+            - |
+              echo "1. Waiting for Kafka..."
+              until nc -z kafka-service 29092; do echo "Kafka is unavailable - sleeping"; sleep 5; done
+              echo "2. Waiting for Postgres..."
+              until nc -z postgres-service 5432; do echo "Postgres is unavailable - sleeping"; sleep 5; done
+              echo "All infrastructure is ready."
+          resources:
+            requests: { memory: "128Mi", cpu: "100m" }
+            limits: { memory: "256Mi", cpu: "200m" }
+
+        - name: run-migrations
+          image: twitter-clone-2026:latest
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "alembic upgrade head"]
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: db-credentials }
+          resources:
+            requests: { memory: "128Mi", cpu: "100m" }
+            limits: { memory: "256Mi", cpu: "200m" }
+
+      containers:
+        - name: api
+          image: twitter-clone-2026:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: db-credentials }
+          resources:
+            requests: { memory: "256Mi", cpu: "250m" }
+            limits: { memory: "512Mi", cpu: "500m" }
+          livenessProbe:
+            httpGet: { path: /, port: 8000 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: media-storage
+              mountPath: /app/media
+      volumes:
+        - name: media-storage
+          persistentVolumeClaim:
+            claimName: media-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: twitter-clone
+  labels:
+      app: backend       # <--- ВОТ ЭТОТ ЛЕЙБЛ ОБЯЗАТЕЛЕН
+spec:
+  selector: { app: backend }
+  ports:
+    - name: http          # <--- Добавьте это
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: twitter-clone
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+    - type: Resource
+      resource: { name: memory, target: { type: Utilization, averageUtilization: 80 } }

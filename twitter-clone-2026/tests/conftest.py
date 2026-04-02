@@ -1,6 +1,15 @@
 import asyncio
+import os
 import sys
 from typing import AsyncGenerator, Generator
+
+# === ВАЖНО: Переопределяем хосты для локального запуска тестов ===
+# Это нужно сделать ДО импорта settings
+os.environ["POSTGRES_HOST"] = "localhost"
+os.environ["POSTGRES_PORT"] = "5433"  # Порт, который мы пробросили в docker-compose
+os.environ["REDIS_URL"] = "redis://localhost:6379/0"
+os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:9092"
+# ==============================================================
 
 import pytest
 from httpx import ASGITransport, AsyncClient

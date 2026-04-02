@@ -56,12 +56,22 @@ spec:
               cpu: "500m"
           livenessProbe:
             exec:
-              command: ["pg_isready", "-U", "postgres"]
+              command: 
+                - "pg_isready"
+                - "-U"
+                - "skillbox"        # <--- БЫЛО: postgres
+                - "-d"
+                - "twitter_clone_db" # <--- ДОБАВИЛ: имя базы для точности
             initialDelaySeconds: 30
             periodSeconds: 10
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", "postgres"]
+              command: 
+                - "pg_isready"
+                - "-U"
+                - "skillbox"        # <--- БЫЛО: postgres
+                - "-d"
+                - "twitter_clone_db" # <--- ДОБАВИЛ: имя базы для точности
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:

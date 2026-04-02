@@ -5,6 +5,7 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+    user: root
     ports:
       - "8000:8000"
     env_file:
@@ -27,11 +28,15 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - app-network
+    ports:
+      - "5433:5432"
 
   redis:
     image: redis:7-alpine
     networks:
       - app-network
+    ports:
+      - "6379:6379"
 
   # === KAFKA INFRASTRUCTURE (Сервисы, не volumes!) ===
   zookeeper:

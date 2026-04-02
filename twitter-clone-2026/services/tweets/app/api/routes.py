@@ -79,6 +79,9 @@ async def delete_tweet(
                 "error_type": "NotFoundError",
                 "error_message": "Tweet not found",
             }
+        r = await get_redis()
+        # Удаляем кэш ленты текущего пользователя, чтобы он сразу увидел изменение
+        await r.delete(f"feed:{user.id}")
         logger.info(f"Tweet {tweet_id} deleted by user {user.id}")
         return {"result": True}
     except PermissionError as e:
@@ -96,18 +99,19 @@ async def like_tweet(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    logger.info(f"User {user.id} liking tweet {tweet_id}")
-    success = await crud.add_like(db, user.id, tweet_id)
+    user_id = user.id
+    logger.info(f"User {user_id} liking tweet {tweet_id}")
+    success = await crud.add_like(db, user_id, tweet_id)
     if not success:
         logger.warning(
-            f"Failed like: User {user.id} tweet {tweet_id} (already liked or not found)"
+            f"Failed like: User {user_id} tweet {tweet_id} (already liked or not found)"
         )
         return {
             "result": False,
             "error_type": "ActionError",
             "error_message": "Cannot like tweet (already liked or not found)",
         }
-    logger.info(f"User {user.id} liked tweet {tweet_id}")
+    logger.info(f"User {user_id} liked tweet {tweet_id}")
     return {"result": True}
 
 
@@ -117,16 +121,17 @@ async def unlike_tweet(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    logger.info(f"User {user.id} unliking tweet {tweet_id}")
-    success = await crud.remove_like(db, user.id, tweet_id)
+    user_id = user.id
+    logger.info(f"User {user_id} unliking tweet {tweet_id}")
+    success = await crud.remove_like(db, user_id, tweet_id)
     if not success:
-        logger.warning(f"Failed unlike: User {user.id} tweet {tweet_id} (not found)")
+        logger.warning(f"Failed unlike: User {user_id} tweet {tweet_id} (not found)")
         return {
             "result": False,
             "error_type": "ActionError",
             "error_message": "Like not found",
         }
-    logger.info(f"User {user.id} unliked tweet {tweet_id}")
+    logger.info(f"User {user_id} unliked tweet {tweet_id}")
     return {"result": True}
 
 

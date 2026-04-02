@@ -1,25 +1,32 @@
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Any
+
+from prometheus_fastapi_instrumentator import Instrumentator
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# Импортируем брокера
+# Импортируем брокера и роутеры
+from libs.database import get_db
 from libs.kafka_conf import broker
-from libs.redis_client import close_redis
 
-# Импортируем роутеры
+# 1. Подключаем настройку логирования (ПЕРВЫМ ДЕЛОМ)
+from libs.logging_config import setup_logging
+from libs.redis_client import close_redis
 from services.tweets.app import router as tweets_router
 from services.users.app import router as users_router
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+setup_logging()
+
+# 2. Создаем логгер для этого файла
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,13 +34,17 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting Kafka Broker connection...")
-    await broker.start()
-    logger.info("Kafka Broker connected.")
+    try:
+        await broker.start()
+        logger.info("Kafka Broker connected.")
+    except Exception:
+        logger.error("Failed to connect to Kafka", exc_info=True)
+        # Можно решить, стоит ли падать приложению, если Kafka недоступна
+        # raise e
 
     yield  # Приложение работает
 
     logger.info("Stopping Kafka Broker connection...")
-    # ИСПРАВЛЕНО: close() -> stop()
     await broker.stop()
     await close_redis()
     logger.info("Kafka Broker stopped.")
@@ -52,6 +63,7 @@ app = FastAPI(
 # Глобальный обработчик ошибок
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Structlog сам добавит traceback, если настроен processor StackInfoRenderer
     logger.error(f"Unhandled error: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
@@ -76,12 +88,24 @@ app.add_middleware(
 app.include_router(users_router)
 app.include_router(tweets_router)
 
+Instrumentator().instrument(app).expose(app)
+
+
+@app.get("/api/healthcheck", tags=["Healthcheck"])
+async def healthcheck(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    try:
+        result = await db.execute(text("SELECT 1"))
+        if result.scalar_one() == 1:
+            return {"status": "ok", "database": "ok"}
+        return {"status": "error", "database": "error"}
+    except Exception as e:
+        logger.exception("Database connection error in healthcheck")
+        return {"status": "error", "database": "error", "details": str(e)}
+
 
 @app.get("/", tags=["Root"])
 async def root() -> dict[str, str]:
-    """
-    Корневой эндпоинт для проверки, что сервер жив.
-    """
+    """Корневой эндпоинт для проверки, что сервер жив."""
     return {"message": "Twitter Clone API is running"}
 
 

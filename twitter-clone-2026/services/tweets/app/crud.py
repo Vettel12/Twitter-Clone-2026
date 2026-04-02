@@ -167,32 +167,33 @@ async def get_feed(db: AsyncSession, user_id: int, limit: int = 100) -> List[Twe
 
 
 async def add_like(db: AsyncSession, user_id: int, tweet_id: int) -> bool:
-    """
-    Ставит лайк.
-    """
     logger.info(f"User {user_id} liking tweet {tweet_id}")
 
     tweet_res = await db.execute(select(Tweet).where(Tweet.id == tweet_id))
     if not tweet_res.scalar_one_or_none():
-        logger.warning(f"Tweet {tweet_id} not found for like")
         return False
 
     like = Like(user_id=user_id, tweet_id=tweet_id)
     db.add(like)
     try:
         await db.commit()
-        logger.info(f"User {user_id} liked tweet {tweet_id}")
+
+        # === СБРОС КЭША (НОВОЕ) ===
+        try:
+            r = await get_redis()
+            await r.delete(f"feed:{user_id}")
+            logger.info(f"Cache invalidated for user {user_id} after like")
+        except Exception as e:
+            logger.error(f"Redis error: {e}")
+        # =========================
+
         return True
     except Exception:
         await db.rollback()
-        logger.error(f"Failed to like tweet {tweet_id} (likely already liked)")
         return False
 
 
 async def remove_like(db: AsyncSession, user_id: int, tweet_id: int) -> bool:
-    """
-    Убирает лайк.
-    """
     logger.info(f"User {user_id} unliking tweet {tweet_id}")
 
     stmt = delete(Like).where(Like.user_id == user_id, Like.tweet_id == tweet_id)
@@ -200,10 +201,14 @@ async def remove_like(db: AsyncSession, user_id: int, tweet_id: int) -> bool:
     await db.commit()
 
     if result.rowcount > 0:
-        logger.info(f"Like removed by user {user_id} from tweet {tweet_id}")
+        # === СБРОС КЭША (НОВОЕ) ===
+        try:
+            r = await get_redis()
+            await r.delete(f"feed:{user_id}")
+            logger.info(f"Cache invalidated for user {user_id} after unlike")
+        except Exception as e:
+            logger.error(f"Redis error: {e}")
+        # =========================
         return True
-    else:
-        logger.warning(
-            f"Like not found for removal by user {user_id} on tweet {tweet_id}"
-        )
-        return False
+
+    return False

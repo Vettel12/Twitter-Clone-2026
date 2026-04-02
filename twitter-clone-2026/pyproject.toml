@@ -41,6 +41,10 @@ dependencies = [
     "aiofiles>=24.1.0",         # Async file I/O
 
     "faker>=40.11.1",  # Для генерации тестовых данных
+
+    "structlog>=25.0.0", # Современное логирование
+
+    "prometheus-fastapi-instrumentator>=7.1.0",
 ]
 
 [project.optional-dependencies]

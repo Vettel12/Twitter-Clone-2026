@@ -58,10 +58,8 @@ class TweetOut(BaseModel):
     """
 
     id: int
-    content: str = Field(
-        ..., serialization_alias="tweet_data", validation_alias="content"
-    )
-    created_at: datetime  # Добавляем дату
+    content: str
+    created_at: datetime
     author: UserInTweet
     attachments: List[str] = Field(default_factory=list)
     likes: List[LikeInTweet] = Field(default_factory=list)

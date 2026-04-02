@@ -1,0 +1,15 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend-monitor
+  namespace: twitter-clone
+  labels:
+    release: prometheus  # Этот лейбл жизненно важен! Он связывает монитор с Prometheus
+spec:
+  selector:
+    matchLabels:
+      app: backend      # Селектор должен совпадать с лейблами вашего Service
+  endpoints:
+  - port: http          # Имя порта в вашем Service (если называние другое - исправьте)
+    path: /metrics
+    interval: 5s
