@@ -1,171 +1,312 @@
-Конечно! Давайте оформим финальные штрихи, чтобы проект выглядел максимально профессионально.
-
-### 1. Файл `.env.example`
-
-Создайте файл с именем `.env.example` в корне проекта. Этот файл подскажет другим разработчикам (и вам в будущем), какие настройки нужны.
-
-```env
-# --- Database Configuration ---
-# Имя базы данных
-POSTGRES_DB=twitter_clone_db
-# Пользователь БД
-POSTGRES_USER=skillbox
-# Пароль БД (в проде использовать сложный пароль!)
-POSTGRES_PASSWORD=skillbox_password
-
-# Хост БД. 
-# Для локального запуска (pytest, alembic) - localhost
-# Для запуска внутри docker-compose переопределяется в docker-compose.yml
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-
-# --- Security ---
-# Секретный ключ для подписи токенов (сгенерируйте свой для продакшена)
-SECRET_KEY=super_secret_key_change_me_in_production
-```
-
-### 2. Файл `README.md`
-
-Создайте или обновите файл `README.md` в корне проекта.
-
-```markdown
 # Twitter Clone 2026
 
-Учебный проект: Микросервисный клон Twitter (Modular Monolith).
-Реализован на FastAPI с использованием асинхронного SQLAlchemy и PostgreSQL.
+Полнофункциональный клон Twitter с микросервисной архитектурой, развернутый в Kubernetes. Проект демонстрирует современные практики DevOps: контейнеризацию, оркестрацию, мониторинг, безопасность и CI/CD готовность.
 
-## 🛠 Технологии
+---
 
+## 📖 Содержание
+- [Архитектура](#-архитектура)
+- [Технологии и Библиотеки](#-технологии-и-библиотеки)
+- [Предварительные требования](#-предварительные-требования)
+- [Установка Окружения](#-установка-окружения-docker--kubernetes--helm)
+- [Запуск проекта](#-запуск-проекта)
+  - [Вариант А: Локально через Docker Compose](#вариант-а-локально-через-docker-compose)
+  - [Вариант Б: В Kubernetes (Production-like)](#вариант-б-в-kubernetes-production-like)
+- [Мониторинг (Prometheus + Grafana)](#-мониторинг-prometheus--grafana)
+- [Проверка работоспособности](#-проверка-работоспособности)
+- [Нагрузочное тестирование](#-нагрузочное-тестирование)
+- [Безопасность](#-безопасность)
+- [Устранение неполадок (Troubleshooting)](#-устранение-неполадок-troubleshooting)
+
+---
+
+## 🏗 Архитектура
+
+Проект построен на микросервисной архитектуре:
+
+*   **API Gateway / Backend:** Основное FastAPI приложение, обрабатывающее REST запросы.
+*   **Frontend:** React приложение, раздается через Nginx.
+*   **Database:** PostgreSQL (хранение пользователей, твитов).
+*   **Cache:** Redis (кэширование ленты).
+*   **Queue:** Apache Kafka (асинхронная обработка событий).
+*   **Monitoring:** Prometheus (метрики), Grafana (визуализация), Loki (логи).
+
+**Структура репозитория:**
+```
+├── deploy/k8s/          # Манифесты Kubernetes
+├── services/
+│   ├── frontend/        # React + Nginx
+│   └── tweets/          # FastAPI Backend
+├── libs/                # Общие модули (config, database, redis)
+├── scripts/             # Скрипты инициализации БД
+├── Dockerfile           # Сборка Backend
+├── Dockerfile.frontend  # Сборка Frontend
+└── docker-compose.yml   # Локальный запуск
+```
+
+---
+
+## 🛠 Технологии и Библиотеки
+
+**Backend:**
 *   **Python 3.13**
-*   **FastAPI** — веб-фреймворк
-*   **SQLAlchemy 2.0** — ORM (Async)
-*   **PostgreSQL** — база данных
-*   **Alembic** — миграции
-*   **Docker** — контейнеризация
-*   **Pytest** — тестирование
+*   **FastAPI** — асинхронный веб-фреймворк.
+*   **SQLAlchemy 2.0** — ORM с поддержкой `async`.
+*   **Alembic** — миграции базы данных.
+*   **Aiokafka** — асинхронный продюсер/консьюмер для Kafka.
+*   **Pydantic** — валидация данных.
+*   **Prometheus FastAPI Instrumentator** — экспорт метрик.
+
+**Frontend:**
+*   **React** — клиентская часть.
+*   **Nginx** — раздача статики и проксирование API.
+
+**Infrastructure:**
+*   **Docker & Kubernetes** — контейнеризация и оркестрация.
+*   **Helm** — пакетный менеджер для Kubernetes.
+*   **PostgreSQL**, **Redis**, **Kafka**.
+
+---
+
+## 💻 Предварительные требования
+
+1.  **OS:** Windows 10/11 (или macOS/Linux).
+2.  **Docker Desktop:** Последняя версия.
+3.  **Git:** Система контроля версий.
+
+---
+
+## ⚙️ Установка Окружения (Docker + Kubernetes + Helm)
+
+### 1. Docker Desktop
+1.  Скачайте и установите [Docker Desktop](https://www.docker.com/products/docker-desktop).
+2.  Запустите приложение.
+
+### 2. Включение Kubernetes
+1.  Откройте настройки Docker Desktop (значок шестеренки).
+2.  Перейдите в раздел **Kubernetes**.
+3.  Поставьте галочку **Enable Kubernetes**.
+4.  Нажмите **Apply & Restart**.
+5.  Дождитесь появления зеленой надписи `Kubernetes is running` внизу окна.
+
+### 3. Установка Helm (Windows)
+Откройте **PowerShell от имени Администратора** и выполните:
+```powershell
+winget install Helm.Helm
+```
+*После установки перезапустите терминал, чтобы команда `helm` стала доступна.*
+
+---
 
 ## 🚀 Запуск проекта
 
-### 1. Подготовка окружения
-
-Создайте файл `.env` в корне проекта на основе примера:
-```bash
-cp .env.example .env
-```
-
-### 2. Запуск через Docker Compose
-
-Этот поднимет базу данных и само приложение:
+### Вариант А: Локально через Docker Compose
+Для быстрой проверки без Kubernetes.
 
 ```bash
-docker-compose -f deploy/docker-compose.yml up -d --build
+# 1. Сборка и запуск
+docker-compose up --build -d
+
+# 2. Проверка
+docker-compose ps
 ```
+API будет доступен на `http://localhost:8000/api/docs`.
 
-### 3. Инициализация базы данных
+---
 
-Примените миграции и создайте тестового пользователя:
+### Вариант Б: В Kubernetes (Production-like)
+Полноценное развертывание в кластере.
+
+#### Шаг 1: Сборка Docker-образов
+Образы должны быть собраны локально, чтобы Kubernetes мог их использовать.
 
 ```bash
-# Применяем миграции
-docker exec -it twitter_clone_app alembic upgrade head
+# Сборка Backend
+docker build -t twitter-clone-2026:latest .
 
-# Создаем тестового пользователя (api-key: test)
-docker exec -it twitter_clone_app python scripts/seed_db.py
+# Сборка Frontend (из корня проекта!)
+docker build -f Dockerfile.frontend -t twitter-clone-frontend:latest .
 ```
 
-## 📖 Документация API
-
-После запуска документация Swagger UI доступна по адресу:
-[http://localhost:8000/api/docs](http://localhost:8000/api/docs)
-
-## 🧪 Тесты
-
-Для запуска тестов локально необходима работающая база данных (можно поднять только её через Docker).
-
-1. Установите зависимости:
-   ```bash
-   pip install -e .[dev]
-   ```
-2. Запустите тесты:
-   ```bash
-   pytest -v
-   ```
+#### Шаг 2: Установка Ingress Controller
+```bash
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+helm install ingress-nginx ingress-nginx/ingress-nginx -n twitter-clone --create-namespace --set controller.service.type=LoadBalancer
 ```
 
-### 3. CI/CD (GitHub Actions)
+#### Шаг 3: Развертывание Базы Данных и Сервисов
+```bash
+# Конфигурация
+kubectl apply -f deploy/k8s/00-namespace.yaml
+kubectl apply -f deploy/k8s/01-configmap.yaml
+kubectl apply -f deploy/k8s/02-secrets.yaml
 
-Давайте настроим автоматическую проверку кода при каждом пуше.
-
-1.  Создайте папку `.github/workflows` в корне проекта.
-2.  Внутри создайте файл `main.yml`.
-
-**Файл: `.github/workflows/main.yml`**
-
-```yaml
-name: Python application CI
-
-on:
-  push:
-    branches: [ "master", "main" ]
-  pull_request:
-    branches: [ "master", "main" ]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    # Сервисы нужны для запуска тестов с базой данных
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: skillbox
-          POSTGRES_PASSWORD: skillbox_password
-          POSTGRES_DB: twitter_clone_db_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python 3.13
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.13"
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e .[dev]
-
-    - name: Create .env file for tests
-      run: |
-        echo "POSTGRES_DB=twitter_clone_db_test" >> .env
-        echo "POSTGRES_USER=skillbox" >> .env
-        echo "POSTGRES_PASSWORD=skillbox_password" >> .env
-        echo "POSTGRES_HOST=localhost" >> .env
-        echo "POSTGRES_PORT=5432" >> .env
-        echo "SECRET_KEY=test_secret_key" >> .env
-
-    - name: Run linting (Ruff)
-      run: |
-        ruff check .
-
-    - name: Run tests with pytest
-      run: |
-        pytest -v --cov=. --cov-report=term-missing
+# Инфраструктура (Postgres, Redis, Kafka)
+kubectl apply -f deploy/k8s/03-postgres.yaml
+kubectl apply -f deploy/k8s/04-redis.yaml
+kubectl apply -f deploy/k8s/05-kafka.yaml
 ```
 
-### Как это работает?
+#### Шаг 4: Инициализация Базы Данных
+Ждем ~1 минуту, пока Postgres перейдет в статус `Running`.
 
-1.  **Linting**: Библиотека `ruff` проверит ваш код на ошибки стиля и потенциальные баги.
-2.  **Services**: GitHub Actions поднимет временный контейнер PostgreSQL для тестов.
-3.  **Tests**: `pytest` запустит все тесты. Если хотя бы один упадет — сборка будет красной (Failed).
+```bash
+# Создаем роль postgres (для Alembic)
+kubectl exec -it deploy/postgres -n twitter-clone -- psql -U skillbox -d twitter_clone_db -c "CREATE USER postgres WITH SUPERUSER PASSWORD 'skillbox_password';"
 
-Теперь после `git push` вы будете видеть зеленую галочку ✅ напротив коммита, что говорит работодателю о высоком качестве кода.
+# Генерируем тестовые данные (пользователь Valera, api-key: test)
+kubectl exec -it deploy/backend -n twitter-clone -- python scripts/seed_db.py
+```
 
-**Поздравляю! Проект полностью готов к защите!** 🎓🚀
+#### Шаг 5: Запуск Приложения
+```bash
+kubectl apply -f deploy/k8s/10-media-pvc.yaml
+kubectl apply -f deploy/k8s/07-backend.yaml
+kubectl apply -f deploy/k8s/09-frontend.yaml
+kubectl apply -f deploy/k8s/11-ingress.yaml
+```
+
+#### Шаг 6: Установка Мониторинга (Prometheus + Grafana)
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+
+helm install prometheus prometheus-community/kube-prometheus-stack -n twitter-clone --set prometheus-node-exporter.enabled=false
+
+# ServiceMonitor для сбора метрик с Backend
+kubectl apply -f deploy/k8s/12-service-monitor.yaml
+```
+
+---
+
+## 📊 Мониторинг (Prometheus + Grafana)
+
+### Доступ к Grafana
+1.  Проброс порта:
+    ```bash
+    kubectl port-forward svc/prometheus-grafana -n twitter-clone 3000:80
+    ```
+2.  Открыть в браузере: [http://localhost:3000](http://localhost:3000)
+3.  **Логин:** `admin`
+4.  **Пароль:** `prom-operator`
+
+### Настройка Dashboard
+В Grafana создайте новый Dashboard и используйте запрос:
+```
+http_request_duration_seconds_count{namespace="twitter-clone"}
+```
+
+---
+
+## ✅ Проверка работоспособности
+
+### 1. Проверка Статуса Подов
+Все поды должны быть в статусе `Running`.
+```bash
+kubectl get pods -n twitter-clone
+```
+Ожидаемый вывод:
+```
+NAME                       READY   STATUS    RESTARTS   AGE
+backend-xxx                 1/1     Running   0          5m
+postgres-xxx                1/1     Running   0          6m
+frontend-xxx                1/1     Running   0          5m
+```
+
+### 2. Проверка Backend (API)
+```bash
+# Проброс порта (в отдельном окне)
+kubectl port-forward svc/backend-service -n twitter-clone 8000:8000
+```
+Откройте Swagger UI: [http://localhost:8000/api/docs](http://localhost:8000/api/docs).
+Авторизация: **API Key** `test`.
+
+### 3. Проверка Frontend
+Откройте [http://localhost](http://localhost) (или `twitter.local`, если прописали hosts).
+Вы должны увидеть ленту твитов.
+*   **Логин:** Valera
+*   **API Key:** test
+
+---
+
+## 🚄 Нагрузочное тестирование
+
+В проекте используется библиотека **Locust** (см. `locustfile.py`).
+
+### Запуск тестов
+1.  Установите Locust: `pip install locust`.
+2.  Запустите (при запущенном API):
+    ```bash
+    locust -f locustfile.py
+    ```
+3.  Откройте веб-интерфейс Locust ([http://localhost:8089](http://localhost:8089)) и задайте количество пользователей.
+
+### Простой тест (через Curl)
+Для проверки метрик в Grafana:
+```bash
+while true; do curl -s http://localhost:8000/api/tweets -H "api-key: test" > /dev/null; sleep 0.1; done
+```
+
+---
+
+## 🛡 Безопасность
+
+В проекте реализованы практики безопасного развертывания:
+
+1.  **Non-root пользователи:** Backend запускается от пользователя `appuser` (UID 1000), а не от `root`.
+    ```yaml
+    # deploy/k8s/07-backend.yaml
+    securityContext:
+      runAsUser: 1000
+      fsGroup: 1000
+    ```
+2.  **Secrets:** Пароли и ключи хранятся в Kubernetes Secrets, а не в открытом виде в коде.
+    ```bash
+    kubectl get secrets -n twitter-clone
+    ```
+3.  **Read-only Filesystem (Опционально):** Можно включить для предотвращения изменений бинарников контейнера во время выполнения.
+
+---
+
+## 🔧 Устранение неполадок (Troubleshooting)
+
+### 1. Ошибка `CrashLoopBackOff` у Backend
+**Причина:** Нет соединения с БД или не пройдены миграции.
+**Решение:**
+*   Проверьте логи: `kubectl logs deploy/backend -n twitter-clone`.
+*   Убедитесь, что Postgres запущен.
+*   Проверьте, что пользователь `postgres` создан (см. Шаг 4 установки).
+
+### 2. Frontend возвращает `502 Bad Gateway`
+**Причина:** Nginx не может подключиться к Backend или порты не совпадают.
+**Решение:**
+*   Проверьте `nginx.conf`: API должен проксироваться на `http://backend-service:8000`.
+*   Проверьте `targetPort` в сервиссе Frontend (обычно 80 для Nginx).
+
+### 3. Grafana падает после установки
+**Причина:** Конфликт DataSource (Prometheus и Loki оба "Default").
+**Решение:**
+```bash
+kubectl delete configmap loki-loki-stack -n twitter-clone
+kubectl rollout restart deployment/prometheus-grafana -n twitter-clone
+```
+
+### 4. Prometheus не видит метрики (Target Down)
+**Причина:** Отсутствует `ServiceMonitor` или лейблы.
+**Решение:**
+Убедитесь, что у сервиса Backend есть лейбл `app: backend`, а в `ServiceMonitor` правильный селектор.
+
+### 5. Ошибка `ImagePullBackOff`
+**Причина:** Kubernetes не нашел образ локально.
+**Решение:** Пересоберите образы (`docker build...`) и убедитесь, что используете `imagePullPolicy: IfNotPresent` в манифестах.
+```
+
+### Команды для отправки в Git
+
+```bash
+git add README.md
+git commit -m "Docs: Finalize comprehensive README with installation, security and troubleshooting sections"
+git push origin master
+```

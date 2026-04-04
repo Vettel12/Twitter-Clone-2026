@@ -2,6 +2,7 @@ import asyncio
 import os
 import random
 import sys
+from datetime import datetime, timezone, timedelta # Добавили timedelta
 
 from faker import Faker
 from sqlalchemy import delete
@@ -26,9 +27,8 @@ MAX_LIKES_PER_USER = 15
 
 
 async def clear_db(db: AsyncSession) -> None:
-    """Очистка таблиц перед заполнением (осторожно в проде!)."""
+    """Очистка таблиц перед заполнением."""
     print("Clearing database...")
-    # Удаляем в порядке зависимостей
     await db.execute(delete(Like))
     await db.execute(delete(Media))
     await db.execute(delete(Tweet))
@@ -43,16 +43,11 @@ async def seed_users(db: AsyncSession) -> list[User]:
     print(f"Creating {NUM_USERS} users...")
     users = []
 
-    # Создаем гарантированного пользователя для тестов
     test_user = User(name="Valera", api_key="test")
     users.append(test_user)
 
-    # Создаем остальных через Faker
     for _ in range(NUM_USERS - 1):
-        user = User(
-            name=fake.user_name(),  # Генерирует имя типа "ivan_petrov"
-            api_key=fake.uuid4(),  # Генерирует уникальный ключ
-        )
+        user = User(name=fake.user_name(), api_key=fake.uuid4())
         users.append(user)
 
     db.add_all(users)
@@ -67,13 +62,13 @@ async def seed_follows(db: AsyncSession, users: list[User]) -> None:
     follows = []
 
     for user in users:
-        # Выбираем случайных пользователей для подписки (кроме себя)
         num_follows = random.randint(0, MAX_FOLLOWS_PER_USER)
-        followees = random.sample([u for u in users if u.id != user.id], num_follows)
-
+        potential_followees = [u for u in users if u.id != user.id]
+        if not potential_followees: continue
+        
+        followees = random.sample(potential_followees, min(num_follows, len(potential_followees)))
         for followee in followees:
-            follow = Follower(follower_id=user.id, followed_id=followee.id)
-            follows.append(follow)
+            follows.append(Follower(follower_id=user.id, followed_id=followee.id))
 
     db.add_all(follows)
     await db.commit()
@@ -81,15 +76,30 @@ async def seed_follows(db: AsyncSession, users: list[User]) -> None:
 
 
 async def seed_tweets(db: AsyncSession, users: list[User]) -> list[Tweet]:
-    """Создание твитов."""
-    print("Creating tweets...")
+    """Создание твитов с РАЗНЫМ временем (разброс по часам/дням)."""
+    print("Creating tweets with staggered time...")
     tweets = []
+    
+    # Берем текущее время как точку отсчета
+    now = datetime.now(timezone.utc)
 
     for user in users:
         num_tweets = random.randint(0, MAX_TWEETS_PER_USER)
         for _ in range(num_tweets):
+            # === ЛОГИКА ВРЕМЕНИ ===
+            # Случайный сдвиг: от 5 минут до 7 дней назад
+            # Это создаст красивый разброс: "5 мин назад", "2 часа назад", "вчера"
+            delta = timedelta(
+                days=random.randint(0, 6), 
+                hours=random.randint(0, 23), 
+                minutes=random.randint(1, 59)
+            )
+            post_time = now - delta
+            
             tweet = Tweet(
-                content=fake.sentence(nb_words=random.randint(5, 20)), author_id=user.id
+                content=fake.sentence(nb_words=random.randint(5, 20)), 
+                author_id=user.id,
+                created_at=post_time # Явно передаем время
             )
             tweets.append(tweet)
 
@@ -103,19 +113,13 @@ async def seed_likes(db: AsyncSession, users: list[User], tweets: list[Tweet]) -
     """Создание лайков."""
     print("Creating likes...")
     likes = []
-
-    if not tweets:
-        print("No tweets to like.")
-        return
+    if not tweets: return
 
     for user in users:
         num_likes = random.randint(0, MAX_LIKES_PER_USER)
-        # Выбираем случайные твиты
         liked_tweets = random.sample(tweets, min(num_likes, len(tweets)))
-
         for tweet in liked_tweets:
-            like = Like(user_id=user.id, tweet_id=tweet.id)
-            likes.append(like)
+            likes.append(Like(user_id=user.id, tweet_id=tweet.id))
 
     db.add_all(likes)
     await db.commit()
@@ -124,19 +128,15 @@ async def seed_likes(db: AsyncSession, users: list[User], tweets: list[Tweet]) -
 
 async def main() -> None:
     async with AsyncSessionLocal() as db:
-        # 1. Очистка
         await clear_db(db)
-
-        # 2. Генерация данных
         users = await seed_users(db)
         await seed_follows(db, users)
         tweets = await seed_tweets(db, users)
         await seed_likes(db, users, tweets)
 
     print("\n=== Database Seeding Complete! ===")
-    print(f"Users: {NUM_USERS}")
-    print("Test user credentials: api-key='test', name='Valera'")
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
