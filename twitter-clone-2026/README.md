@@ -7,16 +7,32 @@
 ## 📖 Содержание
 
 - [О Проекте](#-о-проекте)
-- [Архитектура](#-архитектура)
+- [Схема Базы Данных](#-схема-базы-данных)
+- [Архитектура Приложения](#-архитектура-приложения)
+  - [Вариант 1: Локальное развертывание (Docker Compose)](#вариант-1-локальное-развертывание-docker-compose)
+  - [Вариант 2: Production (Kubernetes)](#вариант-2-production-kubernetes)
+  - [Вариант 3: С Frontend (полный стек)](#вариант-3-с-frontend-полный-стек)
+- [Зачем Нужны Эти Технологии](#-зачем-нужны-эти-технологии)
+  - [Docker](#docker)
+  - [Kubernetes](#kubernetes)
+  - [Apache Kafka](#apache-kafka)
+  - [Redis](#redis)
+  - [PostgreSQL](#postgresql)
 - [Технологический Стек](#-технологический-стек)
 - [API Endpoints](#-api-endpoints)
 - [Предварительные Требования](#-предварительные-требования)
 - [Быстрый Старт (Docker Compose)](#-быстрый-старт-docker-compose)
 - [Production Развертывание (Kubernetes)](#-production-развертывание-kubernetes)
+- [Полное Руководство по Тестированию](#-полное-руководство-по-тестированию)
+  - [Тестирование локально (Docker Compose)](#тестирование-локально-docker-compose)
+  - [Тестирование в Kubernetes](#тестирование-в-kubernetes)
+  - [Тестирование с Frontend](#тестирование-с-frontend)
 - [Мониторинг и Наблюдаемость](#-мониторинг-и-наблюдаемость)
 - [Нагрузочное Тестирование](#-нагрузочное-тестирование)
 - [Безопасность](#-безопасность)
 - [CI/CD и Качество Кода](#-cicd-и-качество-кода)
+- [Управление Жизненным Циклом](#-управление-жизненным-циклом)
+  - [Как удалить и пересобрать с нуля](#как-удалить-и-пересобрать-с-нуля)
 - [Устранение Неполадок](#-устранение-неполадок)
 - [Структура Проекта](#-структура-проекта)
 - [Для Работодателей](#-для-работодателей)
@@ -42,44 +58,478 @@
 
 ---
 
-## 🏗 Архитектура
+## 🗄 Схема Базы Данных
+
+### ER-диаграмма PostgreSQL
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Kubernetes Cluster                        │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐  │
-│  │  Frontend   │    │   Ingress   │    │   API Gateway       │  │
-│  │  (React +   │───▶│  (Nginx)    │───▶│   (FastAPI)         │  │
-│  │   Nginx)    │    │             │    │   Port: 8000        │  │
-│  └─────────────┘    └─────────────┘    └─────────┬───────────┘  │
-│                                                   │              │
-│                    ┌──────────────────────────────┼──────────┐  │
-│                    │                              │          │  │
-│  ┌─────────────┐   │  ┌─────────────┐   ┌────────▼───────┐  │  │
-│  │ PostgreSQL  │◄──┘  │   Redis     │   │   Apache Kafka │  │  │
-│  │ (Users,     │      │  (Cache)    │   │   (Events)     │  │  │
-│  │  Tweets)    │      │  Port:6379  │   │   Port: 29092  │  │  │
-│  └─────────────┘      └─────────────┘   └────────────────┘  │  │
-│                                                              │  │
-│  ┌─────────────────────────────────────────────────────────┐ │  │
-│  │              Monitoring Stack                           │ │  │
-│  │  Prometheus ◄── ServiceMonitor ◄── /metrics endpoint    │ │  │
-│  │  Grafana    ◄── Dashboards & Alerts                     │ │  │
-│  └─────────────────────────────────────────────────────────┘ │  │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              PostgreSQL Database                             │
+│                              twitter_clone_db                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────┐         ┌──────────────────┐                          │
+│  │     users        │         │    followers     │                          │
+│  ├──────────────────┤         ├──────────────────┤                          │
+│  │ 🔑 id (PK)       │◄──┐  ┌──│ 🔑 follower_id   │                          │
+│  │    name          │   │  │   │    (FK→users)    │                          │
+│  │    api_key (UQ)  │   │  │   │ 🔑 followed_id   │                          │
+│  └────────┬─────────┘   │  │   │    (FK→users)    │                          │
+│           │             │  │   └──────────────────┘                          │
+│           │             │  │                                                 │
+│           │             └──┼── Many-to-Many ─────────────────────────────┐   │
+│           │                │                                              │   │
+│           ▼                ▼                                              │   │
+│  ┌──────────────────┐         ┌──────────────────┐                        │   │
+│  │     tweets       │         │      likes       │                        │   │
+│  ├──────────────────┤         ├──────────────────┤                        │   │
+│  │ 🔑 id (PK)       │◄──┐  ┌──│ 🔑 user_id       │                        │   │
+│  │    content       │   │  │   │    (FK→users)    │                        │   │
+│  │    author_id     │   │  │   │ 🔑 tweet_id      │                        │   │
+│  │    created_at    │   │  │   │    (FK→tweets)   │                        │   │
+│  │    updated_at    │   │  │   └──────────────────┘                        │   │
+│  └────────┬─────────┘   │  │                                               │   │
+│           │             │  │                                               │   │
+│           │             └──┼── One-to-Many ─────────────────────────────┐  │   │
+│           │                │                                            │  │   │
+│           ▼                ▼                                            │  │   │
+│  ┌──────────────────┐         ┌──────────────────┐                      │  │   │
+│  │      media       │         │   Relationships   │                      │  │   │
+│  ├──────────────────┤         ├──────────────────┤                      │  │   │
+│  │ 🔑 id (PK)       │         │ users 1──N tweets │                      │  │   │
+│  │    file_path     │         │ users N──M users  │◄── followers table   │  │   │
+│  │    tweet_id (FK) │         │ tweets 1──N likes │                      │  │   │
+│  │    (nullable)    │         │ users 1──N likes  │                      │  │   │
+│  └──────────────────┘         │ tweets 1──N media │                      │  │   │
+│                               └──────────────────┘                      │  │   │
+└─────────────────────────────────────────────────────────────────────────┼──┼───┘
+                                                                        │  │
+  ┌─────────────────────────────────────────────────────────────────────┘  │
+  │                                                                        │
+  │  ┌──────────────────────────────────────────────────────────────────┐  │
+  │  │                    Связи между таблицами                          │  │
+  │  ├──────────────────────────────────────────────────────────────────┤  │
+  │  │                                                                  │  │
+  │  │  users ──(1:N)──▶ tweets                                         │  │
+  │  │    │                        │                                     │  │
+  │  │    │                        └──(1:N)──▶ media                     │  │
+  │  │    │                        │                                     │  │
+  │  │    │                        └──(1:N)──▶ likes                     │  │
+  │  │    │                                      │                       │  │
+  │  │    └──────────(1:N)───────────────────────┘                       │  │
+  │  │                                                                   │  │
+  │  │  users ◄──(N:M)──▶ users  (через followers)                       │  │
+  │  │    follower_id ──▶ user who follows                               │  │
+  │  │    followed_id ──▶ user being followed                            │  │
+  │  │                                                                  │  │
+  │  └──────────────────────────────────────────────────────────────────┘  │
+  └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Ключевые компоненты:
+### Описание таблиц
 
-| Компонент | Назначение |
-|-----------|------------|
-| **API Gateway** | Единая точка входа, маршрутизация, аутентификация |
-| **Users Service** | Управление пользователями, подписки, профили |
-| **Tweets Service** | CRUD твитов, лайки, медиа-вложения |
-| **Feed Service** | Формирование персональной ленты с кэшированием |
-| **PostgreSQL** | Реляционная БД для пользователей, твитов, лайков |
-| **Redis** | Кэш ленты (TTL 60 сек), сессии |
-| **Kafka** | Асинхронная обработка событий (новые твиты, лайки) |
+| Таблица | Назначение | Ключевые поля |
+|---------|------------|---------------|
+| **users** | Пользователи системы | `id` (PK), `name`, `api_key` (unique) |
+| **followers** | Подписки (Many-to-Many) | `follower_id` (FK), `followed_id` (FK) |
+| **tweets** | Твиты/посты | `id` (PK), `content`, `author_id` (FK), `created_at`, `updated_at` |
+| **media** | Медиа-файлы (изображения) | `id` (PK), `file_path`, `tweet_id` (FK, nullable) |
+| **likes** | Лайки (Many-to-Many) | `user_id` (FK), `tweet_id` (FK) — составной PK |
+
+---
+
+## 🏗 Архитектура Приложения
+
+### Вариант 1: Локальное развертывание (Docker Compose)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Ваш компьютер (localhost)                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                     Docker Compose Network                         │  │
+│  │                        (app-network)                               │  │
+│  │                                                                   │  │
+│  │  ┌─────────────┐                                                  │  │
+│  │  │   Browser   │  http://localhost:8000/api/docs                  │  │
+│  │  │  (curl/     │◄───────────────────────────────┐                 │  │
+│  │  │  Postman)   │                                │                 │  │
+│  │  └─────────────┘                                │                 │  │
+│  │                                                  │                 │  │
+│  │  ┌───────────────────────────────────────────────▼─────────────┐  │  │
+│  │  │                    app:8000                                  │  │  │
+│  │  │              ┌─────────────────────┐                         │  │  │
+│  │  │              │   FastAPI Gateway   │                         │  │  │
+│  │  │              │  (Modular Monolith) │                         │  │  │
+│  │  │              │                     │                         │  │  │
+│  │  │              │  ┌───────────────┐  │                         │  │  │
+│  │  │              │  │ Users Router  │  │                         │  │  │
+│  │  │              │  ├───────────────┤  │                         │  │  │
+│  │  │              │  │ Tweets Router │  │                         │  │  │
+│  │  │              │  └───────────────┘  │                         │  │  │
+│  │  │              └──────────┬──────────┘                         │  │  │
+│  │  └─────────────────────────┼────────────────────────────────────┘  │  │
+│  │                            │                                       │  │
+│  │          ┌─────────────────┼─────────────────┐                     │  │
+│  │          │                 │                 │                     │  │
+│  │          ▼                 ▼                 ▼                     │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │  │
+│  │  │  PostgreSQL  │  │    Redis     │  │    Kafka     │             │  │
+│  │  │  :5432→5433  │  │  :6379       │  │  :29092      │             │  │
+│  │  │              │  │              │  │  →9092 ext   │             │  │
+│  │  │ users,tweets │  │   cache      │  │   events     │             │  │
+│  │  │ media,likes  │  │  feed:{id}   │  │ tweets-topic │             │  │
+│  │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘             │  │
+│  │         │                 │                 │                     │  │
+│  │         ▼                 ▼                 ▼                     │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │  │
+│  │  │  Volume:     │  │   In-memory  │  │  Zookeeper   │             │  │
+│  │  │  postgres_   │  │   storage    │  │  :2181       │             │  │
+│  │  │  data        │  │              │  │              │             │  │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘             │  │
+│  │                                                                   │  │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
+│  │  │                  Kafdrop :9000                              │  │  │
+│  │  │           (Web UI для просмотра Kafka)                      │  │  │
+│  │  └─────────────────────────────────────────────────────────────┘  │  │
+│  │                                                                   │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                    Media Volume (./media)                          │  │
+│  │              Загруженные изображения твитов                        │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Потоки данных:**
+```
+1. Запрос клиента → FastAPI (порт 8000)
+2. FastAPI → PostgreSQL (чтение/запись данных)
+3. FastAPI → Redis (кэш ленты, TTL 60 сек)
+4. FastAPI → Kafka (публикация событий о новых твитах)
+5. Feed Service → Kafka (подписка на события)
+```
+
+---
+
+### Вариант 2: Production (Kubernetes)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          Kubernetes Cluster (namespace: twitter-clone)           │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │                          Ingress Controller                                │  │
+│  │                        (Nginx Ingress :80/:443)                           │  │
+│  │                    twitter-clone.local → backend-service                   │  │
+│  └───────────────────────────────┬───────────────────────────────────────────┘  │
+│                                  │                                              │
+│                                  ▼                                              │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │                        Backend Deployment (2+ реплики)                     │  │
+│  │  ┌─────────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  Pod 1                          Pod 2                  Pod N        │  │  │
+│  │  │  ┌──────────────────┐          ┌──────────────────┐                 │  │  │
+│  │  │  │ Init Container:  │          │ Init Container:  │                 │  │  │
+│  │  │  │ 1. wait-for-infra│          │ 1. wait-for-infra│                 │  │  │
+│  │  │  │ 2. alembic mig   │          │ 2. alembic mig   │                 │  │  │
+│  │  │  └──────────────────┘          └──────────────────┘                 │  │  │
+│  │  │  ┌──────────────────┐          ┌──────────────────┐                 │  │  │
+│  │  │  │ Main Container:  │          │ Main Container:  │                 │  │  │
+│  │  │  │ FastAPI :8000    │          │ FastAPI :8000    │                 │  │  │
+│  │  │  │ + Kafka Broker   │          │ + Kafka Broker   │                 │  │  │
+│  │  │  │ + Redis Client   │          │ + Redis Client   │                 │  │  │
+│  │  │  └──────────────────┘          └──────────────────┘                 │  │  │
+│  │  │         │                              │                            │  │  │
+│  │  └─────────┼──────────────────────────────┼────────────────────────────┘  │  │
+│  │            │                              │                               │  │
+│  │            ▼                              ▼                               │  │
+│  │  ┌─────────────────────────────────────────────────────────────────────┐  │  │
+│  │  │                    HPA (Horizontal Pod Autoscaler)                   │  │  │
+│  │  │              CPU > 70% → добавляет реплики (max: 5)                 │  │  │
+│  │  └─────────────────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                 │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │                     Infrastructure Services                                │  │
+│  │                                                                           │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                    │  │
+│  │  │  PostgreSQL  │  │    Redis     │  │    Kafka     │                    │  │
+│  │  │  Deployment  │  │  Deployment  │  │  Deployment  │                    │  │
+│  │  │  :5432       │  │  :6379       │  │  :29092      │                    │  │
+│  │  │  1 реплика   │  │  1 реплика   │  │  1 реплика   │                    │  │
+│  │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘                    │  │
+│  │         │                 │                 │                             │  │
+│  │         ▼                 ▼                 ▼                             │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                    │  │
+│  │  │   PVC:       │  │   In-memory  │  │  Zookeeper   │                    │  │
+│  │  │   postgres-  │  │   storage    │  │  :2181       │                    │  │
+│  │  │   pvc        │  │              │  │              │                    │  │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘                    │  │
+│  │                                                                           │  │
+│  │  ┌─────────────────────────────────────────────────────────────────────┐  │  │
+│  │  │                    Media PVC (media-pvc)                             │  │  │
+│  │  │              Persistent storage для загруженных файлов               │  │  │
+│  │  └─────────────────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                 │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │                     Monitoring Stack                                       │  │
+│  │  ┌──────────────────┐         ┌──────────────────┐                        │  │
+│  │  │    Prometheus    │◄────────│ ServiceMonitor   │                        │  │
+│  │  │  :9090           │  scrapes│ /metrics         │                        │  │
+│  │  └────────┬─────────┘         └──────────────────┘                        │  │
+│  │           │                                                               │  │
+│  │           ▼                                                               │  │
+│  │  ┌──────────────────┐                                                     │  │
+│  │  │     Grafana      │  Dashboards, Alerts                                 │  │
+│  │  │  :3000           │                                                     │  │
+│  │  └──────────────────┘                                                     │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Потоки данных в K8s:**
+```
+1. Внешний запрос → Ingress → backend-service (ClusterIP)
+2. backend-service → один из Pod'ов Backend (Round Robin)
+3. Backend Pod → postgres-service (ClusterIP) → PostgreSQL Pod
+4. Backend Pod → redis-service (ClusterIP) → Redis Pod
+5. Backend Pod → kafka-service (ClusterIP) → Kafka Pod
+6. Prometheus → ServiceMonitor → scrapes /metrics с каждого Pod
+```
+
+---
+
+### Вариант 3: С Frontend (полный стек)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                            Полный стек с Frontend                                │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │                           Клиентский браузер                               │  │
+│  │                        http://twitter-clone.local                         │  │
+│  └───────────────────────────────┬───────────────────────────────────────────┘  │
+│                                  │                                              │
+│                                  ▼                                              │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │                        Nginx Ingress Controller                            │  │
+│  │                                                                           │  │
+│  │  Правила маршрутизации:                                                   │  │
+│  │  ┌─────────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  /          → frontend-service (статические файлы Vue.js)           │  │  │
+│  │  │  /api/*     → backend-service (FastAPI API)                         │  │  │
+│  │  │  /api/docs  → backend-service (Swagger UI)                          │  │  │
+│  │  │  /metrics   → prometheus-service (метрики)                          │  │  │
+│  │  └─────────────────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────┬───────────────────────────────────────────┘  │
+│                                  │                                              │
+│              ┌───────────────────┴───────────────────┐                          │
+│              ▼                                       ▼                          │
+│  ┌───────────────────────┐           ┌───────────────────────┐                  │
+│  │   Frontend Deployment │           │   Backend Deployment  │                  │
+│  │   (Vue.js + Nginx)    │           │   (FastAPI)           │                  │
+│  │                       │           │                       │                  │
+│  │  ┌─────────────────┐  │           │  ┌─────────────────┐  │                  │
+│  │  │ Nginx :80       │  │           │  │ FastAPI :8000   │  │                  │
+│  │  │ ├─ / → Vue app  │  │           │  │ ├─ /api/users/* │  │                  │
+│  │  │ └─ /api/* →     │──┼──────────▶│  │ ├─ /api/tweets/*│  │                  │
+│  │  │    proxy_pass   │  │           │  │ ├─ /api/medias  │  │                  │
+│  │  │    backend:8000 │  │           │  │ └─ /metrics     │  │                  │
+│  │  └─────────────────┘  │           │  └─────────────────┘  │                  │
+│  └───────────────────────┘           └───────────┬───────────┘                  │
+│                                                  │                              │
+│                                    ┌─────────────┼─────────────┐                │
+│                                    ▼             ▼             ▼                │
+│                          ┌──────────────┐ ┌──────────────┐ ┌──────────────┐    │
+│                          │  PostgreSQL  │ │    Redis     │ │    Kafka     │    │
+│                          │  :5432       │ │  :6379       │ │  :29092      │    │
+│                          └──────────────┘ └──────────────┘ └──────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Потоки данных с Frontend:**
+```
+1. Браузер → Nginx (загружает Vue.js приложение)
+2. Vue.js → /api/* → Nginx проксирует на Backend
+3. Backend → PostgreSQL/Redis/Kafka (обработка)
+4. Backend → JSON ответ → Nginx → Vue.js → Браузер
+```
+
+---
+
+## 🤔 Зачем Нужны Эти Технологии
+
+### Docker
+
+**Что это:** Платформа контейнеризации, которая упаковывает приложение со всеми зависимостями в изолированный образ.
+
+**Зачем нужен в этом проекте:**
+
+| Проблема | Решение Docker |
+|----------|----------------|
+| "На моём компьютере работает" | Одинаковое окружение у всех разработчиков |
+| Сложная установка зависимостей | Один образ содержит всё необходимое |
+| Конфликты версий библиотек | Каждый сервис в своём изолированном контейнере |
+| Долгий деплой | Запуск контейнера за секунды |
+
+**Как работает:**
+```
+Dockerfile → docker build → Docker Image → docker run → Container
+```
+
+**Взаимодействие с другими технологиями:**
+```
+Docker ──создаёт образы──▶ Kubernetes использует эти образы
+   │
+   ├── PostgreSQL в контейнере ──хранит данные в Volume──▶ postgres_data
+   ├── Redis в контейнере ──кэширует──▶ данные в RAM
+   ├── Kafka в контейнере ──очередь сообщений──▶ события между сервисами
+   └── Backend в контейнере ──обрабатывает──▶ HTTP запросы
+```
+
+---
+
+### Kubernetes
+
+**Что это:** Система оркестрации контейнеров — управляет их запуском, масштабированием и восстановлением.
+
+**Зачем нужен в этом проекте:**
+
+| Сценарий | Без Kubernetes | С Kubernetes |
+|----------|----------------|--------------|
+| Упал контейнер | Ручной перезапуск | Автоматический restart (RestartPolicy) |
+| Возросла нагрузка | Ручное добавление серверов | HPA автоматически добавляет Pod'ы |
+| Обновление приложения | Downtime при деплое | Rolling Update без простоя |
+| Балансировка нагрузки | Ручная настройка | Service автоматически распределяет трафик |
+| Хранение секретов | В коде или .env файлах | Kubernetes Secrets (зашифрованы) |
+
+**Как работает:**
+```
+kubectl apply -f manifest.yaml → API Server → etcd
+                                      │
+                                      ▼
+                              Scheduler → выбирает Node
+                                      │
+                                      ▼
+                              Kubelet → запускает Container
+                                      │
+                                      ▼
+                              Controller Manager → следит за состоянием
+```
+
+**Взаимодействие с Docker:**
+```
+Docker build ──создаёт──▶ Image ──push──▶ Docker Registry
+                                                    │
+Kubernetes pull ──получает──▶ Image ──запускает──▶ Container в Pod
+```
+
+---
+
+### Apache Kafka
+
+**Что это:** Распределённая система обмена сообщениями (message broker).
+
+**Зачем нужна в этом проекте:**
+
+| Сценарий | Без Kafka | С Kafka |
+|----------|-----------|---------|
+| Создание твита | Ждём пока все подписчики обновят ленту | Публикуем событие и сразу отвечаем клиенту |
+| Отказ подписчика | Потеря данных | Kafka сохранит и доставит позже |
+| Пиковая нагрузка | Сервер тормозит | Kafka буферизует события |
+
+**Как работает в проекте:**
+```
+┌─────────────┐     publish      ┌──────────────┐     subscribe     ┌─────────────┐
+│   Backend   │ ───────────────▶ │    Kafka     │ ───────────────▶ │ Feed Service│
+│  (создание  │   tweets-topic   │   Broker     │   tweets-topic   │ (обновление │
+│   твита)    │                  │              │                  │   кэша)     │
+└─────────────┘                  └──────────────┘                  └─────────────┘
+```
+
+**Поток данных:**
+```
+1. Пользователь создаёт твит → POST /api/tweets
+2. Backend сохраняет твит в PostgreSQL
+3. Backend публикует событие в Kafka topic "tweets-topic"
+4. Feed Service подписан на этот топик
+5. Feed Service получает событие и обновляет кэш ленты подписчиков
+6. Backend сразу отвечает клиенту (не ждёт обновления кэша)
+```
+
+**Почему не Redis Pub/Sub:**
+- Kafka сохраняет сообщения — можно прочитать позже
+- Kafka гарантирует доставку — не потеряет при сбое
+- Kafka масштабируется — можно добавить брокеров
+
+---
+
+### Redis
+
+**Что это:** In-memory хранилище данных (ключ-значение), работает в оперативной памяти.
+
+**Зачем нужен в этом проекте:**
+
+| Сценарий | Без Redis | С Redis |
+|----------|-----------|---------|
+| Загрузка ленты | SQL запрос к БД каждый раз | Ответ из кэша за <1мс |
+| Нагрузка на БД | 100 запросов/сек → БД тормозит | 95% запросов из кэша |
+| Время ответа | 50-100мс (запрос к PostgreSQL) | 1-5мс (из RAM) |
+
+**Как работает в проекте:**
+```
+┌─────────────┐     GET feed:{user_id}     ┌─────────────┐
+│   Backend   │ ──────────────────────────▶ │    Redis    │
+│             │◄────────────────────────── │             │
+│             │   cached JSON или MISS      │  TTL: 60s   │
+└──────┬──────┘                             └─────────────┘
+       │
+       │ при MISS:
+       ▼
+┌─────────────┐
+│ PostgreSQL  │
+│ (запрос к   │
+│  БД)        │
+└─────────────┘
+```
+
+**Поток данных:**
+```
+1. Запрос GET /api/tweets
+2. Backend проверяет Redis: ключ feed:{user_id}
+3. Если есть (HIT) → возвращаем из кэша (1-5мс)
+4. Если нет (MISS) → запрос в PostgreSQL → сохраняем в Redis на 60 сек
+5. При создании/удалении твита → инвалидация кэша (delete feed:{user_id})
+```
+
+---
+
+### PostgreSQL
+
+**Что это:** Реляционная СУБД с ACID гарантиями.
+
+**Зачем нужна в этом проекте:**
+
+| Данные | Почему PostgreSQL |
+|--------|-------------------|
+| Пользователи | Нужна консистентность, транзакции |
+| Твиты | Связи с лайками, медиа, автором |
+| Подписки | Many-to-Many связи, уникальность |
+| Лайки | Составной PK (user_id + tweet_id) |
+
+**Почему не MongoDB:**
+- Нужны строгие связи между таблицами
+- Транзакции при создании твита с медиа
+- Уникальные ограничения (api_key, follows)
 
 ---
 
@@ -147,6 +597,12 @@ api-key: test
 | `DELETE` | `/api/tweets/{tweet_id}/likes` | Убрать лайк |
 | `POST` | `/api/medias` | Загрузить медиа (изображение) |
 
+### Health Check
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `GET` | `/api/healthcheck` | Проверка здоровья API и БД |
+| `GET` | `/metrics` | Prometheus метрики |
+
 ### Swagger UI
 Полная интерактивная документация доступна по адресу:
 ```
@@ -182,7 +638,7 @@ http://localhost:8000/api/docs
 3. Поставьте галочку **Enable Kubernetes**
 4. Нажмите **Apply & Restart**
 5. Дождитесь зелёного индикатора `Kubernetes is running`
-6. Проверйте:
+6. Проверьте:
    ```bash
    kubectl cluster-info
    kubectl get nodes
@@ -376,6 +832,288 @@ kubectl port-forward svc/backend-service -n twitter-clone 8000:8000
 
 ---
 
+## 📋 Полное Руководство по Тестированию
+
+### Тестирование локально (Docker Compose)
+
+#### 1. Подготовка окружения
+```bash
+# Запуск всех сервисов
+docker-compose -f deploy/docker-compose.yml up --build -d
+
+# Ожидание запуска (30-60 секунд)
+sleep 30
+
+# Проверка что все контейнеры запущены
+docker-compose -f deploy/docker-compose.yml ps
+# Все статусы должны быть "Up"
+```
+
+#### 2. Инициализация БД
+```bash
+# Миграции
+docker-compose -f deploy/docker-compose.yml exec app alembic upgrade head
+
+# Тестовые данные
+docker-compose -f deploy/docker-compose.yml exec app python scripts/seed_db.py
+```
+
+#### 3. Проверка Health Check
+```bash
+curl http://localhost:8000/api/healthcheck
+# Ожидаемый ответ: {"status": "ok", "database": "ok"}
+```
+
+#### 4. Полный цикл тестирования API
+
+```bash
+# ===== ШАГ 1: Получить текущий профиль =====
+echo "=== GET /api/users/me ==="
+curl -s -H "api-key: test" http://localhost:8000/api/users/me | jq .
+
+# ===== ШАГ 2: Получить другого пользователя =====
+echo "=== GET /api/users/2 ==="
+curl -s -H "api-key: test" http://localhost:8000/api/users/2 | jq .
+
+# ===== ШАГ 3: Подписаться на пользователя =====
+echo "=== POST /api/users/2/follow ==="
+curl -s -X POST -H "api-key: test" http://localhost:8000/api/users/2/follow | jq .
+
+# ===== ШАГ 4: Загрузить изображение =====
+echo "=== POST /api/medias ==="
+# Создаём тестовый файл
+echo "test image content" > /tmp/test_image.txt
+curl -s -X POST -H "api-key: test" \
+  -F "file=@/tmp/test_image.txt" \
+  http://localhost:8000/api/medias | jq .
+# Запомните media_id из ответа
+
+# ===== ШАГ 5: Создать твит =====
+echo "=== POST /api/tweets ==="
+curl -s -X POST -H "api-key: test" \
+  -H "Content-Type: application/json" \
+  -d '{"tweet_data": "Hello from Docker Compose!", "tweet_media_ids": []}' \
+  http://localhost:8000/api/tweets | jq .
+# Запомните tweet_id из ответа
+
+# ===== ШАГ 6: Получить ленту =====
+echo "=== GET /api/tweets ==="
+curl -s -H "api-key: test" http://localhost:8000/api/tweets | jq .
+
+# ===== ШАГ 7: Лайкнуть твит =====
+echo "=== POST /api/tweets/1/likes ==="
+curl -s -X POST -H "api-key: test" http://localhost:8000/api/tweets/1/likes | jq .
+
+# ===== ШАГ 8: Убрать лайк =====
+echo "=== DELETE /api/tweets/1/likes ==="
+curl -s -X DELETE -H "api-key: test" http://localhost:8000/api/tweets/1/likes | jq .
+
+# ===== ШАГ 9: Удалить твит =====
+echo "=== DELETE /api/tweets/1 ==="
+curl -s -X DELETE -H "api-key: test" http://localhost:8000/api/tweets/1 | jq .
+
+# ===== ШАГ 10: Отписаться от пользователя =====
+echo "=== DELETE /api/users/2/follow ==="
+curl -s -X DELETE -H "api-key: test" http://localhost:8000/api/users/2/follow | jq .
+```
+
+#### 5. Проверка кэширования Redis
+```bash
+# Первый запрос (MISS — запрос в БД)
+curl -s -H "api-key: test" http://localhost:8000/api/tweets
+
+# Второй запрос (HIT — из кэша, быстрее)
+curl -s -H "api-key: test" http://localhost:8000/api/tweets
+
+# Проверка ключа в Redis
+docker-compose -f deploy/docker-compose.yml exec redis redis-cli KEYS "feed:*"
+```
+
+#### 6. Проверка Kafka
+```bash
+# Откройте Kafdrop в браузере
+# http://localhost:9000
+
+# Или через CLI — посмотрите топики
+docker-compose -f deploy/docker-compose.yml exec kafka \
+  kafka-topics --list --bootstrap-server localhost:9092
+```
+
+#### 7. Проверка метрик Prometheus
+```bash
+# Метрики должны быть доступны
+curl http://localhost:8000/metrics
+```
+
+---
+
+### Тестирование в Kubernetes
+
+#### 1. Подготовка кластера
+```bash
+# Проверка подключения к кластеру
+kubectl cluster-info
+
+# Проверка нод
+kubectl get nodes
+
+# Создание namespace
+kubectl apply -f deploy/k8s/00-namespace.yaml
+```
+
+#### 2. Развертывание инфраструктуры
+```bash
+# ConfigMap и Secrets
+kubectl apply -f deploy/k8s/01-configmap.yaml
+kubectl apply -f deploy/k8s/02-secrets.yaml
+
+# PostgreSQL, Redis, Kafka
+kubectl apply -f deploy/k8s/03-postgres.yaml
+kubectl apply -f deploy/k8s/04-redis.yaml
+kubectl apply -f deploy/k8s/05-kafka.yaml
+
+# Ожидание запуска инфраструктуры
+kubectl wait --for=condition=ready pod -l app=postgres -n twitter-clone --timeout=120s
+kubectl wait --for=condition=ready pod -l app=redis -n twitter-clone --timeout=120s
+kubectl wait --for=condition=ready pod -l app=kafka -n twitter-clone --timeout=120s
+```
+
+#### 3. Развертывание приложения
+```bash
+# Сборка образа (если ещё не собран)
+docker build -t twitter-clone-2026:latest .
+
+# PVC для медиа
+kubectl apply -f deploy/k8s/10-media-pvc.yaml
+
+# Backend (Init Containers сами запустят миграции)
+kubectl apply -f deploy/k8s/07-backend.yaml
+
+# Ожидание запуска
+kubectl wait --for=condition=ready pod -l app=backend -n twitter-clone --timeout=120s
+```
+
+#### 4. Проверка Pod'ов
+```bash
+# Все поды должны быть Running
+kubectl get pods -n twitter-clone
+
+# Детальная информация
+kubectl describe pod -l app=backend -n twitter-clone
+
+# Логи backend
+kubectl logs -l app=backend -n twitter-clone --tail=50
+```
+
+#### 5. Проброс порта и тестирование
+```bash
+# В одном терминале — проброс порта
+kubectl port-forward svc/backend-service -n twitter-clone 8000:8000
+
+# В другом терминале — тестирование
+# Health check
+curl http://localhost:8000/api/healthcheck
+
+# Полный цикл API (те же команды что и для Docker Compose)
+curl -s -H "api-key: test" http://localhost:8000/api/users/me | jq .
+curl -s -H "api-key: test" http://localhost:8000/api/tweets | jq .
+```
+
+#### 6. Проверка через kubectl exec
+```bash
+# Проверка Redis изнутри кластера
+kubectl exec -it deploy/redis -n twitter-clone -- redis-cli KEYS "feed:*"
+
+# Проверка Kafka топиков
+kubectl exec -it deploy/kafka -n twitter-clone -- \
+  kafka-topics --list --bootstrap-server localhost:9092
+
+# Проверка PostgreSQL
+kubectl exec -it deploy/postgres -n twitter-clone -- \
+  psql -U skillbox -d twitter_clone_db -c "SELECT count(*) FROM users;"
+```
+
+#### 7. Проверка HPA (автомасштабирование)
+```bash
+# Посмотреть текущий HPA
+kubectl get hpa -n twitter-clone
+
+# Создать нагрузку
+while true; do
+  curl -s http://localhost:8000/api/tweets -H "api-key: test" > /dev/null
+done
+
+# Наблюдать за увеличением реплик
+kubectl get hpa -n twitter-clone -w
+```
+
+---
+
+### Тестирование с Frontend
+
+#### 1. Развертывание Frontend
+```bash
+# Сборка frontend образа
+docker build -f Dockerfile.frontend -t twitter-clone-frontend:latest .
+
+# Развертывание в K8s
+kubectl apply -f deploy/k8s/09-frontend.yaml
+
+# Проверка
+kubectl get pods -n twitter-clone -l app=frontend
+```
+
+#### 2. Настройка Ingress
+```bash
+# Установка Ingress Controller
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+  -n twitter-clone --create-namespace \
+  --set controller.service.type=LoadBalancer
+
+# Применение Ingress правил
+kubectl apply -f deploy/k8s/11-ingress.yaml
+
+# Проверка
+kubectl get ingress -n twitter-clone
+```
+
+#### 3. Получение внешнего IP
+```bash
+# Получить IP Ingress Controller
+kubectl get svc -n twitter-clone -l app.kubernetes.io/name=ingress-nginx
+
+# Для локального тестирования — проброс
+kubectl port-forward svc/ingress-nginx-controller -n twitter-clone 80:80
+```
+
+#### 4. Тестирование через браузер
+```
+# Откройте в браузере:
+http://localhost                    # Frontend приложение
+http://localhost/api/docs           # Swagger UI
+http://localhost/api/healthcheck    # Health check
+```
+
+#### 5. Тестирование API через Frontend
+```bash
+# Frontend проксирует /api/* на backend
+curl http://localhost/api/healthcheck
+curl -H "api-key: test" http://localhost/api/tweets
+curl -H "api-key: test" http://localhost/api/users/me
+```
+
+#### 6. Проверка CORS
+```bash
+# Запрос с другого origin должен работать
+curl -H "Origin: http://example.com" \
+  -H "api-key: test" \
+  http://localhost/api/tweets -v
+# В ответе должен быть заголовок Access-Control-Allow-Origin: *
+```
+
+---
+
 ## 📊 Мониторинг и Наблюдаемость
 
 ### Установка Prometheus + Grafana
@@ -526,6 +1264,70 @@ tests/
 ├── conftest.py      # Фикстуры и конфигурация
 └── test_api.py      # Интеграционные тесты API
 ```
+
+---
+
+## 🔄 Управление Жизненным Циклом
+
+### Как удалить и пересобрать с нуля
+
+#### Docker Compose — полная очистка
+```bash
+# Остановка и удаление контейнеров
+docker-compose -f deploy/docker-compose.yml down
+
+# С удалением volumes (данные БД будут удалены!)
+docker-compose -f deploy/docker-compose.yml down -v
+
+# Удаление образов (для пересборки)
+docker rmi twitter-clone-2026:latest
+
+# Полная очистка (все неиспользуемые образы, контейнеры, сети)
+docker system prune -a --volumes
+
+# Пересборка с нуля
+docker-compose -f deploy/docker-compose.yml up --build -d
+```
+
+#### Kubernetes — полная очистка
+```bash
+# Удаление namespace (удалит ВСЁ внутри)
+kubectl delete namespace twitter-clone
+
+# Или по отдельности:
+# Удаление Helm релизов
+helm uninstall prometheus -n twitter-clone 2>/dev/null
+helm uninstall ingress-nginx -n twitter-clone 2>/dev/null
+
+# Удаление всех ресурсов
+kubectl delete all --all -n twitter-clone
+kubectl delete namespace twitter-clone
+
+# Удаление Docker образов
+docker rmi twitter-clone-2026:latest 2>/dev/null
+docker rmi twitter-clone-frontend:latest 2>/dev/null
+
+# Пересборка с нуля
+docker build -t twitter-clone-2026:latest .
+docker build -f Dockerfile.frontend -t twitter-clone-frontend:latest .
+
+# Развертывание с нуля
+kubectl apply -f deploy/k8s/00-namespace.yaml
+kubectl apply -f deploy/k8s/01-configmap.yaml
+kubectl apply -f deploy/k8s/02-secrets.yaml
+# ... и так далее по порядку из раздела Production
+```
+
+#### Когда нужно пересобирать с нуля?
+
+| Ситуация | Что удалять |
+|----------|-------------|
+| Изменился код приложения | Пересобрать Docker образ |
+| Изменились зависимости | Пересобрать Docker образ + `--no-cache` |
+| Изменились K8s манифесты | `kubectl apply` (без удаления) |
+| Изменилась схема БД | Новый миграция + `alembic upgrade head` |
+| Проблемы с данными | Удалить volumes и пересоздать |
+| Полный сброс | Удалить namespace и пересобрать всё |
 
 ---
 
