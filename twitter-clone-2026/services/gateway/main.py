@@ -1,16 +1,15 @@
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Any
-
-from prometheus_fastapi_instrumentator import Instrumentator
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, AsyncGenerator
 
 import uvicorn
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Импортируем брокера и роутеры
 from libs.database import get_db
@@ -23,6 +22,8 @@ from services.tweets.app import router as tweets_router
 from services.users.app import router as users_router
 
 setup_logging()
+
+DbSession = Depends(get_db)
 
 # 2. Создаем логгер для этого файла
 
@@ -92,7 +93,7 @@ Instrumentator().instrument(app).expose(app)
 
 
 @app.get("/api/healthcheck", tags=["Healthcheck"])
-async def healthcheck(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def healthcheck(db: AsyncSession = DbSession) -> dict[str, Any]:
     try:
         result = await db.execute(text("SELECT 1"))
         if result.scalar_one() == 1:

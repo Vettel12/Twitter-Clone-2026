@@ -2,7 +2,7 @@ import asyncio
 import os
 import random
 import sys
-from datetime import datetime, timezone, timedelta # Добавили timedelta
+from datetime import datetime, timedelta, timezone  # Добавили timedelta
 
 from faker import Faker
 from sqlalchemy import delete
@@ -64,9 +64,12 @@ async def seed_follows(db: AsyncSession, users: list[User]) -> None:
     for user in users:
         num_follows = random.randint(0, MAX_FOLLOWS_PER_USER)
         potential_followees = [u for u in users if u.id != user.id]
-        if not potential_followees: continue
-        
-        followees = random.sample(potential_followees, min(num_follows, len(potential_followees)))
+        if not potential_followees:
+            continue
+
+        followees = random.sample(
+            potential_followees, min(num_follows, len(potential_followees))
+        )
         for followee in followees:
             follows.append(Follower(follower_id=user.id, followed_id=followee.id))
 
@@ -79,7 +82,7 @@ async def seed_tweets(db: AsyncSession, users: list[User]) -> list[Tweet]:
     """Создание твитов с РАЗНЫМ временем (разброс по часам/дням)."""
     print("Creating tweets with staggered time...")
     tweets = []
-    
+
     # Берем текущее время как точку отсчета
     now = datetime.now(timezone.utc)
 
@@ -90,16 +93,16 @@ async def seed_tweets(db: AsyncSession, users: list[User]) -> list[Tweet]:
             # Случайный сдвиг: от 5 минут до 7 дней назад
             # Это создаст красивый разброс: "5 мин назад", "2 часа назад", "вчера"
             delta = timedelta(
-                days=random.randint(0, 6), 
-                hours=random.randint(0, 23), 
-                minutes=random.randint(1, 59)
+                days=random.randint(0, 6),
+                hours=random.randint(0, 23),
+                minutes=random.randint(1, 59),
             )
             post_time = now - delta
-            
+
             tweet = Tweet(
-                content=fake.sentence(nb_words=random.randint(5, 20)), 
+                content=fake.sentence(nb_words=random.randint(5, 20)),
                 author_id=user.id,
-                created_at=post_time # Явно передаем время
+                created_at=post_time,  # Явно передаем время
             )
             tweets.append(tweet)
 
@@ -113,7 +116,8 @@ async def seed_likes(db: AsyncSession, users: list[User], tweets: list[Tweet]) -
     """Создание лайков."""
     print("Creating likes...")
     likes = []
-    if not tweets: return
+    if not tweets:
+        return
 
     for user in users:
         num_likes = random.randint(0, MAX_LIKES_PER_USER)
@@ -139,4 +143,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-    

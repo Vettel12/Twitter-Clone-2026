@@ -866,18 +866,20 @@ curl http://localhost:8000/api/healthcheck
 
 #### 4. Полный цикл тестирования API
 
+> **Примечание:** `curl` без `jq` выводит JSON в сыром виде. Для форматирования можно использовать `python3 -m json.tool` (встроен в Python).
+
 ```bash
 # ===== ШАГ 1: Получить текущий профиль =====
 echo "=== GET /api/users/me ==="
-curl -s -H "api-key: test" http://localhost:8000/api/users/me | jq .
+curl -s -H "api-key: test" http://localhost:8000/api/users/me | python3 -m json.tool
 
 # ===== ШАГ 2: Получить другого пользователя =====
 echo "=== GET /api/users/2 ==="
-curl -s -H "api-key: test" http://localhost:8000/api/users/2 | jq .
+curl -s -H "api-key: test" http://localhost:8000/api/users/2 | python3 -m json.tool
 
 # ===== ШАГ 3: Подписаться на пользователя =====
 echo "=== POST /api/users/2/follow ==="
-curl -s -X POST -H "api-key: test" http://localhost:8000/api/users/2/follow | jq .
+curl -s -X POST -H "api-key: test" http://localhost:8000/api/users/2/follow | python3 -m json.tool
 
 # ===== ШАГ 4: Загрузить изображение =====
 echo "=== POST /api/medias ==="
@@ -885,7 +887,7 @@ echo "=== POST /api/medias ==="
 echo "test image content" > /tmp/test_image.txt
 curl -s -X POST -H "api-key: test" \
   -F "file=@/tmp/test_image.txt" \
-  http://localhost:8000/api/medias | jq .
+  http://localhost:8000/api/medias | python3 -m json.tool
 # Запомните media_id из ответа
 
 # ===== ШАГ 5: Создать твит =====
@@ -893,51 +895,145 @@ echo "=== POST /api/tweets ==="
 curl -s -X POST -H "api-key: test" \
   -H "Content-Type: application/json" \
   -d '{"tweet_data": "Hello from Docker Compose!", "tweet_media_ids": []}' \
-  http://localhost:8000/api/tweets | jq .
+  http://localhost:8000/api/tweets | python3 -m json.tool
 # Запомните tweet_id из ответа
 
 # ===== ШАГ 6: Получить ленту =====
 echo "=== GET /api/tweets ==="
-curl -s -H "api-key: test" http://localhost:8000/api/tweets | jq .
+curl -s -H "api-key: test" http://localhost:8000/api/tweets | python3 -m json.tool
 
 # ===== ШАГ 7: Лайкнуть твит =====
 echo "=== POST /api/tweets/1/likes ==="
-curl -s -X POST -H "api-key: test" http://localhost:8000/api/tweets/1/likes | jq .
+curl -s -X POST -H "api-key: test" http://localhost:8000/api/tweets/1/likes | python3 -m json.tool
 
 # ===== ШАГ 8: Убрать лайк =====
 echo "=== DELETE /api/tweets/1/likes ==="
-curl -s -X DELETE -H "api-key: test" http://localhost:8000/api/tweets/1/likes | jq .
+curl -s -X DELETE -H "api-key: test" http://localhost:8000/api/tweets/1/likes | python3 -m json.tool
 
 # ===== ШАГ 9: Удалить твит =====
 echo "=== DELETE /api/tweets/1 ==="
-curl -s -X DELETE -H "api-key: test" http://localhost:8000/api/tweets/1 | jq .
+curl -s -X DELETE -H "api-key: test" http://localhost:8000/api/tweets/1 | python3 -m json.tool
 
 # ===== ШАГ 10: Отписаться от пользователя =====
 echo "=== DELETE /api/users/2/follow ==="
-curl -s -X DELETE -H "api-key: test" http://localhost:8000/api/users/2/follow | jq .
+curl -s -X DELETE -H "api-key: test" http://localhost:8000/api/users/2/follow | python3 -m json.tool
 ```
 
-#### 5. Проверка кэширования Redis
+#### 5. Проверка кэширования Redis (MISS vs HIT)
+
+**Как понять что кэш работает:**
+
 ```bash
-# Первый запрос (MISS — запрос в БД)
+# 1. Сначала инвалидируем кэш (удаляем ключ)
+docker-compose -f deploy/docker-compose.yml exec redis redis-cli DEL "feed:1"
+
+# 2. Первый запрос — MISS (данные из БД)
+# В логах backend вы увидите: CACHE MISS feed:1
 curl -s -H "api-key: test" http://localhost:8000/api/tweets
 
-# Второй запрос (HIT — из кэша, быстрее)
+# 3. Второй запрос — HIT (данные из кэша)
+# В логах backend вы увидите: CACHE HIT feed:1
 curl -s -H "api-key: test" http://localhost:8000/api/tweets
+```
 
-# Проверка ключа в Redis
+**Наблюдение за логами в реальном времени:**
+
+```bash
+# В одном терминале — следим за логами backend
+docker-compose -f deploy/docker-compose.yml logs -f app
+
+# В другом терминале — делаем запросы
+curl -s -H "api-key: test" http://localhost:8000/api/tweets > /dev/null
+curl -s -H "api-key: test" http://localhost:8000/api/tweets > /dev/null
+```
+
+**Что вы увидите в логах:**
+```
+INFO: CACHE MISS feed:1 — запрос к PostgreSQL
+INFO: CACHE HIT feed:1 — ответ из Redis (быстрее!)
+```
+
+**Прямая проверка Redis:**
+
+```bash
+# Посмотреть все ключи кэша
 docker-compose -f deploy/docker-compose.yml exec redis redis-cli KEYS "feed:*"
+
+# Посмотреть TTL оставшегося времени жизни ключа
+docker-compose -f deploy/docker-compose.yml exec redis redis-cli TTL "feed:1"
+
+# Посмотреть содержимое ключа
+docker-compose -f deploy/docker-compose.yml exec redis redis-cli GET "feed:1"
 ```
 
-#### 6. Проверка Kafka
-```bash
-# Откройте Kafdrop в браузере
-# http://localhost:9000
+#### 6. Проверка работы Kafka
 
-# Или через CLI — посмотрите топики
+**Как понять что Kafka работает и обрабатывает события:**
+
+**Способ 1: Через Kafdrop (Web UI)**
+```bash
+# Откройте в браузере:
+# http://localhost:9000
+# Вы увидите топик "tweets-topic" и сообщения в нём
+```
+
+**Способ 2: Через логи backend (публикация)**
+```bash
+# В логах backend при создании твита вы увидите:
+# INFO: Published event to Kafka: tweets-topic
+curl -s -X POST -H "api-key: test" \
+  -H "Content-Type: application/json" \
+  -d '{"tweet_data": "Kafka test tweet"}' \
+  http://localhost:8000/api/tweets
+
+# Проверка в логах:
+docker-compose -f deploy/docker-compose.yml logs app | grep -i kafka
+```
+
+**Способ 3: Через логи Feed Service (потребление)**
+```bash
+# Feed Service подписан на топик и логирует получение событий:
+docker-compose -f deploy/docker-compose.yml logs feed | grep -i "tweet"
+
+# Вы увидите что-то вроде:
+# INFO: Consumed tweet event from user X
+# INFO: Updated feed cache for followers of user X
+```
+
+**Способ 4: Через CLI — просмотр топиков и сообщений**
+```bash
+# Список топиков
 docker-compose -f deploy/docker-compose.yml exec kafka \
   kafka-topics --list --bootstrap-server localhost:9092
+
+# Информация о топике (количество партиций, реплик)
+docker-compose -f deploy/docker-compose.yml exec kafka \
+  kafka-topics --describe --topic tweets-topic --bootstrap-server localhost:9092
+
+# Чтение сообщений из топика (в реальном времени)
+docker-compose -f deploy/docker-compose.yml exec kafka \
+  kafka-console-consumer --topic tweets-topic --from-beginning \
+  --bootstrap-server localhost:9092 --timeout-ms 10000
 ```
+
+**Полный цикл проверки Kafka:**
+```bash
+# 1. Запускаем потребителя в одном терминале
+docker-compose -f deploy/docker-compose.yml exec kafka \
+  kafka-console-consumer --topic tweets-topic --from-beginning \
+  --bootstrap-server localhost:9092
+
+# 2. В другом терминале создаём твит
+curl -s -X POST -H "api-key: test" \
+  -H "Content-Type: application/json" \
+  -d '{"tweet_data": "Hello Kafka!"}' \
+  http://localhost:8000/api/tweets
+
+# 3. В терминале потребителя вы увидите JSON-сообщение:
+# {"user_id": 1, "tweet_id": 5, "action": "create", "timestamp": "..."}
+```
+
+> **Если Kafka не работает:** проверьте что контейнер `kafka` запущен (`docker-compose ps`), и что Zookeeper (`:2181`) доступен — Kafka зависит от него.
 
 #### 7. Проверка метрик Prometheus
 ```bash
@@ -1015,8 +1111,8 @@ kubectl port-forward svc/backend-service -n twitter-clone 8000:8000
 curl http://localhost:8000/api/healthcheck
 
 # Полный цикл API (те же команды что и для Docker Compose)
-curl -s -H "api-key: test" http://localhost:8000/api/users/me | jq .
-curl -s -H "api-key: test" http://localhost:8000/api/tweets | jq .
+curl -s -H "api-key: test" http://localhost:8000/api/users/me | python3 -m json.tool
+curl -s -H "api-key: test" http://localhost:8000/api/tweets | python3 -m json.tool
 ```
 
 #### 6. Проверка через kubectl exec
