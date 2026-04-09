@@ -152,7 +152,7 @@
 │  │                        (app-network)                               │  │
 │  │                                                                   │  │
 │  │  ┌─────────────┐                                                  │  │
-│  │  │   Browser   │  http://localhost:8000/api/docs                  │  │
+  │  │  │   Browser   │  http://localhost:8000/docs                    │  │
 │  │  │  (curl/     │◄───────────────────────────────┐                 │  │
 │  │  │  Postman)   │                                │                 │  │
 │  │  └─────────────┘                                │                 │  │
@@ -606,7 +606,7 @@ api-key: test
 ### Swagger UI
 Полная интерактивная документация доступна по адресу:
 ```
-http://localhost:8000/api/docs
+http://localhost:8000/docs
 ```
 
 ---
@@ -687,22 +687,25 @@ cd twitter-clone-2026
 ```bash
 # Скопируйте пример .env файла
 cp .env.example .env
-
-# При необходимости отредактируйте
-# .env
 ```
 
-Содержимое `.env`:
-```env
-# Database
-POSTGRES_DB=twitter_clone_db
-POSTGRES_USER=skillbox
-POSTGRES_PASSWORD=skillbox_password
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
+`.env.example` настроен для **Docker Compose** — значения хостов соответствуют именам сервисов в docker-compose сети:
+- `POSTGRES_HOST=postgres` — имя сервиса PostgreSQL
+- `KAFKA_BOOTSTRAP_SERVERS=kafka:29092` — внутренний listener Kafka
+- `REDIS_URL=redis://redis:6379/0` — имя сервиса Redis
 
-# Security
-SECRET_KEY=super_secret_key_change_me_in_production
+Для **Kubernetes** измените хосты на имена K8s сервисов:
+```env
+POSTGRES_HOST=postgres-service
+KAFKA_BOOTSTRAP_SERVERS=kafka-service:29092
+REDIS_URL=redis://redis-service:6379/0
+```
+
+Для **локальной разработки** (без Docker):
+```env
+POSTGRES_HOST=localhost
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+REDIS_URL=redis://localhost:6379/0
 ```
 
 ### Шаг 3: Запуск всех сервисов
@@ -726,7 +729,7 @@ docker-compose -f deploy/docker-compose.yml exec app python scripts/seed_db.py
 ### Шаг 5: Проверка работы
 ```bash
 # Swagger UI
-# Откройте: http://localhost:8000/api/docs
+# Откройте: http://localhost:8000/docs
 
 # Проверка API через curl
 curl -H "api-key: test" http://localhost:8000/api/tweets
@@ -827,7 +830,7 @@ kubectl get pods -n twitter-clone
 kubectl port-forward svc/backend-service -n twitter-clone 8000:8000
 
 # Откройте Swagger UI
-# http://localhost:8000/api/docs
+# http://localhost:8000/docs
 ```
 
 ---
@@ -1184,14 +1187,29 @@ kubectl port-forward svc/ingress-nginx-controller -n twitter-clone 80:80
 ```
 
 #### 4. Тестирование через браузер
+
+**Вариант A: С Nginx (Docker Compose или Kubernetes с Nginx)**
 ```
 # Откройте в браузере:
-http://localhost                    # Frontend приложение
-http://localhost/api/docs           # Swagger UI
+http://localhost                    # Frontend приложение (через Nginx)
+http://localhost/docs               # Swagger UI (через Nginx → Backend)
+http://localhost/api/docs           # Swagger UI (алиас для совместимости)
 http://localhost/api/healthcheck    # Health check
 ```
+> **Примечание**: Для работы этого варианта нужен запущенный Nginx (в Docker Compose или K8s). Nginx настроен с проксированием как `/docs`, так и `/api/docs` на backend.
+
+**Вариант B: Локально без Nginx (FastAPI обслуживает frontend)**
+```
+# Откройте в браузере:
+http://localhost:8000               # Frontend приложение + API
+http://localhost:8000/docs         # Swagger UI
+http://localhost:8000/api/healthcheck  # Health check
+```
+> **Примечание**: FastAPI обслуживает frontend из папки `frontend/` и медиа-файлы из папки `media/`.
 
 #### 5. Тестирование API через Frontend
+
+**Вариант A: С Nginx**
 ```bash
 # Frontend проксирует /api/* на backend
 curl http://localhost/api/healthcheck
@@ -1199,12 +1217,20 @@ curl -H "api-key: test" http://localhost/api/tweets
 curl -H "api-key: test" http://localhost/api/users/me
 ```
 
+**Вариант B: Локально без Nginx**
+```bash
+# FastAPI обслуживает API на порту 8000
+curl http://localhost:8000/api/healthcheck
+curl -H "api-key: test" http://localhost:8000/api/tweets
+curl -H "api-key: test" http://localhost:8000/api/users/me
+```
+
 #### 6. Проверка CORS
 ```bash
 # Запрос с другого origin должен работать
 curl -H "Origin: http://example.com" \
   -H "api-key: test" \
-  http://localhost/api/tweets -v
+  http://localhost:8000/api/tweets -v
 # В ответе должен быть заголовок Access-Control-Allow-Origin: *
 ```
 
@@ -1313,13 +1339,16 @@ securityContext:
 ```
 
 ### Проверка зависимостей на уязвимости
+
 ```bash
 # Bandit — поиск уязвимостей в коде
 bandit -r . -ll
 
-# Safety — проверка зависимостей
+# Safety — проверка зависимостей на CVE
 safety check
 ```
+
+Подробнее о проверке безопасности — в разделе [CI/CD и Качество Кода](#-cicd-и-качество-кода).
 
 ---
 
@@ -1352,6 +1381,34 @@ pytest --cov=. --cov-report=html
 
 # Асинхронные тесты
 pytest -v
+```
+
+### Проверка безопасности зависимостей
+
+Проект использует **Safety** для проверки зависимостей на известные уязвимости:
+
+```bash
+# Установка (если ещё не установлен)
+pip install safety
+
+# Проверка зависимостей
+safety check
+
+# Проверка с выводом деталей
+safety check --full-report
+```
+
+> ⚠️ **Важно:** При обнаружении уязвимостей обновите зависимости:
+> ```bash
+> pip install -r requirements.txt --upgrade
+> ```
+
+**Интеграция в CI/CD** (пример для GitLab CI):
+```yaml
+safety:
+  script:
+    - pip install safety
+    - safety check --exit-code 1
 ```
 
 ### Структура тестов
@@ -1600,7 +1657,7 @@ cd twitter-clone-2026
 docker-compose -f deploy/docker-compose.yml up --build -d
 
 # Открыть Swagger UI
-# http://localhost:8000/api/docs
+# http://localhost:8000/docs
 ```
 
 #### 2. Полная проверка API (10 минут)

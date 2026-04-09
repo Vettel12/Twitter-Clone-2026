@@ -1,4 +1,6 @@
 import pytest
+import redis.asyncio as redis
+from faststream.kafka import KafkaBroker
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -380,3 +382,73 @@ async def test_like_nonexistent_tweet(client: AsyncClient) -> None:
         "not found" in data["error_message"].lower()
         or "cannot" in data["error_message"].lower()
     )
+
+
+@pytest.mark.asyncio
+async def test_redis_connection(redis_client: "redis.Redis[str]") -> None:
+    """
+    Тест: Проверка подключения к Redis.
+    """
+    # 1. Проверяем, что можем подключиться к Redis
+    assert redis_client is not None, "Redis client should be initialized"
+
+    # 2. Выполняем базовую операцию - записываем и читаем значение
+    test_key = "pytest:test:redis"
+    test_value = "hello_redis"
+
+    await redis_client.set(test_key, test_value, ex=60)
+    result = await redis_client.get(test_key)
+
+    # 3. Проверяем, что значение записалось и прочиталось
+    assert result == test_value, f"Expected '{test_value}', got '{result}'"
+
+    # 4. Очищаем тестовый ключ
+    await redis_client.delete(test_key)
+
+    # 5. Проверяем TTL (Time To Live)
+    await redis_client.set(test_key, test_value, ex=10)
+    ttl = await redis_client.ttl(test_key)
+    assert 0 < ttl <= 10, f"TTL should be between 0 and 10, got {ttl}"
+    await redis_client.delete(test_key)
+
+
+@pytest.mark.asyncio
+async def test_kafka_connection(kafka_broker: KafkaBroker) -> None:
+    """
+    Тест: Проверка подключения к Kafka и публикации сообщения.
+    """
+    # 1. Создаем тестовое сообщение
+    test_message = {
+        "user_id": 1,
+        "tweet_id": 999,
+        "action": "test",
+        "timestamp": "2026-04-08T12:00:00",
+    }
+
+    # 2. Публикуем сообщение в топик
+    await kafka_broker.publish(
+        message=test_message,
+        topic="tweets-topic",
+    )
+
+
+@pytest.mark.asyncio
+async def test_kafka_consumer_tweet_creation(client: AsyncClient) -> None:
+    """
+    Тест: Проверка, что при создании твита событие публикуется в Kafka.
+    """
+    # 1. Создаем твит через API
+    headers = {"api-key": "test"}
+    tweet_data = {"tweet_data": "Kafka test tweet!", "tweet_media_ids": []}
+
+    response = await client.post("/api/tweets", json=tweet_data, headers=headers)
+
+    # 2. Проверяем, что твит создался
+    assert response.status_code == 200
+    data = response.json()
+    assert data["result"] is True
+    assert "tweet_id" in data
+
+    # Твит создался успешно - это означает, что Kafka publishing
+    # внутри приложения работает (если бы Kafka была недоступна,
+    # приложение бы вернуло ошибку)

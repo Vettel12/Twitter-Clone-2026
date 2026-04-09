@@ -12,6 +12,8 @@ os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:9092"
 # ==============================================================
 
 import pytest
+import redis.asyncio as redis
+from faststream.kafka import KafkaBroker
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -143,3 +145,35 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         yield ac
 
     app.dependency_overrides.clear()
+
+
+# --- 4. REDIS CLIENT (Per Test) ---
+@pytest.fixture(scope="function")
+async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:
+    """
+    Подключенный клиент Redis для тестов.
+    """
+    import os
+
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    client = redis.from_url(redis_url, decode_responses=True)
+
+    yield client
+
+    await client.close()
+
+
+# --- 5. KAFKA BROKER (Per Test) ---
+@pytest.fixture(scope="function")
+async def kafka_broker() -> AsyncGenerator[KafkaBroker, None]:
+    """
+    Подключенный брокер Kafka для тестов.
+    """
+    import os
+
+    kafka_url = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    broker = KafkaBroker(kafka_url)
+
+    await broker.start()
+    yield broker
+    await broker.stop()

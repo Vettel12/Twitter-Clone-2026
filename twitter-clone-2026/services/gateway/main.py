@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -6,7 +7,9 @@ from typing import Any, AsyncGenerator
 import uvicorn
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,20 +38,40 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting Kafka Broker connection...")
-    try:
-        await broker.start()
-        logger.info("Kafka Broker connected.")
-    except Exception:
-        logger.error("Failed to connect to Kafka", exc_info=True)
-        # Можно решить, стоит ли падать приложению, если Kafka недоступна
-        # raise e
+
+    max_retries = 10
+    retry_delay = 5
+
+    for attempt in range(max_retries):
+        try:
+            await broker.start()
+            logger.info("✅ Kafka Broker connected.")
+            break
+        except Exception as e:
+            logger.warning(
+                f"Kafka connection attempt {attempt + 1}/{max_retries} failed: {e}"
+            )
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.error("❌ Failed to connect to Kafka after maximum retries.")
+                # Опционально: raise RuntimeError("Kafka connection failed") from e
 
     yield  # Приложение работает
 
-    logger.info("Stopping Kafka Broker connection...")
-    await broker.stop()
+    # === Graceful shutdown ===
+    logger.info("🛑 Stopping services...")
+
+    # Закрываем Kafka (с безопасной обработкой ошибок)
+    try:
+        await broker.close()  # ← правильный метод
+        logger.info("✅ Kafka Broker closed.")
+    except Exception as e:
+        logger.warning(f"Error closing Kafka broker: {e}", exc_info=True)
+
+    # Закрываем Redis
     await close_redis()
-    logger.info("Kafka Broker stopped.")
+    logger.info("✅ All services stopped.")
 
 
 # Создаем экземпляр приложения
@@ -56,7 +79,9 @@ app = FastAPI(
     title="Twitter Clone 2026",
     description="Микросервисный клон Twitter (Modular Monolith)",
     version="1.0.0",
-    docs_url="/api/docs",
+    docs_url="/api/docs",           # ← Swagger UI
+    openapi_url="/api/openapi.json", # ← Схема API (ОБЯЗАТЕЛЬНО!)
+    redoc_url="/api/redoc",         # ← Опционально
     lifespan=lifespan,
 )
 
@@ -85,11 +110,58 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Подключаем роутеры
+# Подключаем роутеры (API endpoints)
 app.include_router(users_router)
 app.include_router(tweets_router)
 
 Instrumentator().instrument(app).expose(app)
+
+# Монтируем статические файлы для фронтенда
+# Важно: монтируем на /static, чтобы не перекрыть /api/*
+frontend_path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
+if os.path.exists(frontend_path):
+    app.mount("/static", StaticFiles(directory=frontend_path), name="frontend-static")
+    # Создаём redirect с / на /static/index.html
+    @app.get("/")
+    async def serve_index():
+        return RedirectResponse(url="/static/index.html")
+
+# Монтируем статические файлы для медиа
+media_path = os.path.join(os.path.dirname(__file__), "..", "..", "media")
+if os.path.exists(media_path):
+    app.mount("/media", StaticFiles(directory=media_path), name="media")
+
+
+# Переопределяем функцию получения OpenAPI schema с правильной версией
+def get_openapi_schema() -> dict[str, Any]:
+    """Получить OpenAPI schema с правильной версией."""
+    # Всегда генерируем новую схему (не используем кеш)
+    logger.info("Generating OpenAPI schema...")
+
+    # Используем встроенный метод FastAPI для генерации путей
+    generated_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    # Убеждаемся что версия правильная
+    if generated_schema:
+        generated_schema["openapi"] = "3.0.3"
+        logger.info(f"OpenAPI version set to: {generated_schema.get('openapi')}")
+        logger.info(f"Swagger docs_url: {app.docs_url}")
+    else:
+        logger.error("Failed to generate OpenAPI schema")
+
+    app.openapi_schema = generated_schema
+    return app.openapi_schema
+
+
+@app.get("/openapi.json", include_in_schema=False)
+async def get_openapi_endpoint() -> dict[str, Any]:
+    """Эндпоинт для получения OpenAPI schema."""
+    return get_openapi_schema()
 
 
 @app.get("/api/healthcheck", tags=["Healthcheck"])
@@ -104,9 +176,9 @@ async def healthcheck(db: AsyncSession = DbSession) -> dict[str, Any]:
         return {"status": "error", "database": "error", "details": str(e)}
 
 
-@app.get("/", tags=["Root"])
-async def root() -> dict[str, str]:
-    """Корневой эндпоинт для проверки, что сервер жив."""
+@app.get("/api", tags=["Root"])
+async def api_root() -> dict[str, str]:
+    """Корневой API эндпоинт для проверки, что сервер жив."""
     return {"message": "Twitter Clone API is running"}
 
 
