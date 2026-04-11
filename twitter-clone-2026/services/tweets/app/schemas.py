@@ -28,12 +28,17 @@ class LikeInTweet(BaseModel):
 
 
 class TweetCreate(BaseModel):
-    """Входящие данные при создании твита (POST /api/tweets)."""
+    """
+    Входящие данные при создании твита (POST /api/tweets).
+    ✅ FIXED: Добавлены ограничения на размер
+    """
 
     # Имена полей строго по ТЗ
-    tweet_data: str = Field(..., description="Текст твита")
+    tweet_data: str = Field(
+        ..., min_length=1, max_length=280, description="Tweet text (1-280 characters)"
+    )
     tweet_media_ids: List[int] = Field(
-        default_factory=list, description="Список ID загруженных картинок"
+        default_factory=list, max_length=4, description="List of media IDs (0-4 items)"
     )
 
 

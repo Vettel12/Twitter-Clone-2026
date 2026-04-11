@@ -10,10 +10,10 @@ from sqlalchemy.orm import DeclarativeBase
 from libs.config import settings
 
 # 1. Создаем асинхронный движок
-# echo=True выводит SQL запросы в консоль (полезно для отладки, в продакшене лучше False)
+# ✅ FIXED: echo берется из конфига (НИКОГДА True в production!)
 engine = create_async_engine(
     settings.sqlalchemy_database_url,
-    echo=True,
+    echo=settings.sqlalchemy_echo,
 )
 
 # 2. Создаем фабрику сессий

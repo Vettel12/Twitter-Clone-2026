@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
@@ -100,18 +101,59 @@ async def like_tweet(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
     user_id = user.id
-    logger.info(f"User {user_id} liking tweet {tweet_id}")
+    logger.info(f"[LIKE] START: User {user_id} liking tweet {tweet_id}")
+
+    # 1. Добавляем лайк в БД
     success = await crud.add_like(db, user_id, tweet_id)
     if not success:
         logger.warning(
-            f"Failed like: User {user_id} tweet {tweet_id} (already liked or not found)"
+            f"[LIKE] FAILED: User {user_id} tweet {tweet_id} (already liked or not found)"
         )
         return {
             "result": False,
             "error_type": "ActionError",
             "error_message": "Cannot like tweet (already liked or not found)",
         }
-    logger.info(f"User {user_id} liked tweet {tweet_id}")
+
+    logger.info("[LIKE] DB_UPDATE: Like added to DB")
+
+    # 2. Получаем пост, чтобы узнать автора
+    updated_tweet = await crud.get_tweet_by_id(db, tweet_id)
+
+    # 3. Инвалидируем кэш ленты текущего пользователя И автора поста
+    r = await get_redis()
+    await r.delete(f"feed:{user_id}")
+    if updated_tweet:
+        await r.delete(f"feed:{updated_tweet.author_id}")
+        logger.info(
+            f"[LIKE] CACHE_INVALIDATED: feed:{user_id} and feed:{updated_tweet.author_id}"
+        )
+    else:
+        logger.info(f"[LIKE] CACHE_INVALIDATED: feed:{user_id}")
+    logger.info(
+        f"[LIKE] TWEET_FETCHED: {tweet_id} with {len(updated_tweet.likes) if updated_tweet else 0} likes"
+    )
+
+    if updated_tweet and updated_tweet.likes:
+        likes_list = [
+            schemas.LikeInTweet(user_id=like.user_id, name=like.user.name)
+            for like in updated_tweet.likes
+        ]
+        attachments_list = [f"/media/{Path(media.file_path).name}" for media in updated_tweet.media]
+        tweet_out = schemas.TweetOut(
+            id=updated_tweet.id,
+            content=updated_tweet.content,
+            created_at=updated_tweet.created_at,
+            author=schemas.UserInTweet.model_validate(updated_tweet.author),
+            attachments=attachments_list,
+            likes=likes_list,
+        )
+        logger.info(
+            f"[LIKE] SUCCESS: Returning updated tweet with {len(likes_list)} likes"
+        )
+        return {"result": True, "tweet": tweet_out}
+
+    logger.warning("[LIKE] WARNING: Tweet not found after like")
     return {"result": True}
 
 
@@ -122,16 +164,57 @@ async def unlike_tweet(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
     user_id = user.id
-    logger.info(f"User {user_id} unliking tweet {tweet_id}")
+    logger.info(f"[UNLIKE] START: User {user_id} unliking tweet {tweet_id}")
+
+    # 1. Удаляем лайк из БД
     success = await crud.remove_like(db, user_id, tweet_id)
     if not success:
-        logger.warning(f"Failed unlike: User {user_id} tweet {tweet_id} (not found)")
+        logger.warning(f"[UNLIKE] FAILED: User {user_id} tweet {tweet_id} (not found)")
         return {
             "result": False,
             "error_type": "ActionError",
             "error_message": "Like not found",
         }
-    logger.info(f"User {user_id} unliked tweet {tweet_id}")
+
+    logger.info("[UNLIKE] DB_UPDATE: Like removed from DB")
+
+    # 2. Получаем пост, чтобы узнать автора
+    updated_tweet = await crud.get_tweet_by_id(db, tweet_id)
+
+    # 3. Инвалидируем кэш ленты текущего пользователя И автора поста
+    r = await get_redis()
+    await r.delete(f"feed:{user_id}")
+    if updated_tweet:
+        await r.delete(f"feed:{updated_tweet.author_id}")
+        logger.info(
+            f"[UNLIKE] CACHE_INVALIDATED: feed:{user_id} and feed:{updated_tweet.author_id}"
+        )
+    else:
+        logger.info(f"[UNLIKE] CACHE_INVALIDATED: feed:{user_id}")
+    logger.info(
+        f"[UNLIKE] TWEET_FETCHED: {tweet_id} with {len(updated_tweet.likes) if updated_tweet else 0} likes"
+    )
+
+    if updated_tweet and updated_tweet.likes is not None:
+        likes_list = [
+            schemas.LikeInTweet(user_id=like.user_id, name=like.user.name)
+            for like in updated_tweet.likes
+        ]
+        attachments_list = [f"/media/{Path(media.file_path).name}" for media in updated_tweet.media]
+        tweet_out = schemas.TweetOut(
+            id=updated_tweet.id,
+            content=updated_tweet.content,
+            created_at=updated_tweet.created_at,
+            author=schemas.UserInTweet.model_validate(updated_tweet.author),
+            attachments=attachments_list,
+            likes=likes_list,
+        )
+        logger.info(
+            f"[UNLIKE] SUCCESS: Returning updated tweet with {len(likes_list)} likes"
+        )
+        return {"result": True, "tweet": tweet_out}
+
+    logger.warning("[UNLIKE] WARNING: Tweet not found after unlike")
     return {"result": True}
 
 
@@ -163,7 +246,7 @@ async def get_tweet_feed(
             schemas.LikeInTweet(user_id=like.user_id, name=like.user.name)
             for like in tweet.likes
         ]
-        attachments_list = [media.file_path for media in tweet.media]
+        attachments_list = [f"/media/{Path(media.file_path).name}" for media in tweet.media]
 
         tweet_out = schemas.TweetOut(
             id=tweet.id,
@@ -177,7 +260,7 @@ async def get_tweet_feed(
 
     response_obj = schemas.TweetListResponse(tweets=tweets_list)
 
-    # 3. Сохраняем в кеш на 60 секунд
+    # 3. Сохраняем в кэш на 60 секунд
     await r.set(cache_key, response_obj.model_dump_json(), ex=60)
     logger.info(f"Feed for user {user.id} cached for 60s")
 

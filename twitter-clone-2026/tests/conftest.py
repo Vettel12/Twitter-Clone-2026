@@ -114,7 +114,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
                 session_obj.begin_nested()
 
         # Seed Data
-        user = User(name="TestUser", api_key="test")
+        user = User(name="TestUser", api_key_hash=User.hash_api_key("test"))
         session.add(user)
         await session.flush()
 

@@ -1,0 +1,154 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seed-script
+  namespace: twitter-clone
+data:
+  seed_db.py: |
+    import asyncio
+    import os
+    import random
+    import sys
+    from datetime import datetime, timedelta, timezone
+
+    from faker import Faker
+    from sqlalchemy import delete
+
+    # Add root to path
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from libs.database import AsyncSessionLocal
+    from services.tweets.app.models import Like, Media, Tweet
+    from services.users.app.models import Follower, User
+
+    fake = Faker("ru_RU")
+
+    NUM_USERS = 50
+    MAX_TWEETS_PER_USER = 10
+    MAX_FOLLOWS_PER_USER = 10
+    MAX_LIKES_PER_USER = 15
+
+
+    async def clear_db(db: AsyncSession) -> None:
+        """Clear tables before seeding."""
+        print("Clearing database...")
+        await db.execute(delete(Like))
+        await db.execute(delete(Media))
+        await db.execute(delete(Tweet))
+        await db.execute(delete(Follower))
+        await db.execute(delete(User))
+        await db.commit()
+        print("Database cleared.")
+
+
+    async def seed_users(db: AsyncSession) -> list[User]:
+        """Create users with hashed API keys."""
+        print(f"Creating {NUM_USERS} users...")
+        users = []
+
+        # Test user with hashed API key
+        test_api_key = "test"
+        test_user = User(
+            name="Valera",
+            api_key_hash=User.hash_api_key(test_api_key)
+        )
+        users.append(test_user)
+
+        # Regular users with generated and hashed API keys
+        for _ in range(NUM_USERS - 1):
+            api_key = User.generate_api_key()
+            user = User(
+                name=fake.user_name(),
+                api_key_hash=User.hash_api_key(api_key)
+            )
+            users.append(user)
+
+        db.add_all(users)
+        await db.commit()
+        print(f"Created {len(users)} users.")
+        return users
+
+
+    async def seed_follows(db: AsyncSession, users: list[User]) -> None:
+        """Create follows."""
+        print("Creating follows...")
+        follows = []
+
+        for user in users:
+            num_follows = random.randint(0, MAX_FOLLOWS_PER_USER)
+            potential_followees = [u for u in users if u.id != user.id]
+            if not potential_followees:
+                continue
+
+            followees = random.sample(
+                potential_followees, min(num_follows, len(potential_followees))
+            )
+            for followee in followees:
+                follows.append(Follower(follower_id=user.id, followed_id=followee.id))
+
+        db.add_all(follows)
+        await db.commit()
+        print(f"Created {len(follows)} follows.")
+
+
+    async def seed_tweets(db: AsyncSession, users: list[User]) -> list[Tweet]:
+        """Create tweets with staggered timestamps."""
+        print("Creating tweets with staggered time...")
+        tweets = []
+
+        now = datetime.now(timezone.utc)
+
+        for user in users:
+            num_tweets = random.randint(0, MAX_TWEETS_PER_USER)
+            for _ in range(num_tweets):
+                delta = timedelta(
+                    days=random.randint(0, 6),
+                    hours=random.randint(0, 23),
+                    minutes=random.randint(1, 59),
+                )
+                post_time = now - delta
+
+                tweet = Tweet(
+                    content=fake.sentence(nb_words=random.randint(5, 20)),
+                    author_id=user.id,
+                    created_at=post_time,
+                )
+                tweets.append(tweet)
+
+        db.add_all(tweets)
+        await db.commit()
+        print(f"Created {len(tweets)} tweets.")
+        return tweets
+
+
+    async def seed_likes(db: AsyncSession, users: list[User], tweets: list[Tweet]) -> None:
+        """Create likes."""
+        print("Creating likes...")
+        likes = []
+        if not tweets:
+            return
+
+        for user in users:
+            num_likes = random.randint(0, MAX_LIKES_PER_USER)
+            liked_tweets = random.sample(tweets, min(num_likes, len(tweets)))
+            for tweet in liked_tweets:
+                likes.append(Like(user_id=user.id, tweet_id=tweet.id))
+
+        db.add_all(likes)
+        await db.commit()
+        print(f"Created {len(likes)} likes.")
+
+
+    async def main() -> None:
+        async with AsyncSessionLocal() as db:
+            await clear_db(db)
+            users = await seed_users(db)
+            await seed_follows(db, users)
+            tweets = await seed_tweets(db, users)
+            await seed_likes(db, users, tweets)
+
+
+    if __name__ == "__main__":
+        asyncio.run(main())

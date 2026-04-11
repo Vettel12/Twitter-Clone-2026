@@ -18,9 +18,12 @@ async def get_user_by_api_key(db: AsyncSession, api_key: str) -> User | None:
     """
     Получает пользователя по API-ключу.
     Используется для аутентификации.
-    SELECT * FROM users WHERE api_key = :api_key
+    ✅ FIXED: Сравнивает хеш ключа, а не plain text
     """
-    query = select(User).where(User.api_key == api_key)
+    from .models import User
+
+    api_key_hash = User.hash_api_key(api_key)
+    query = select(User).where(User.api_key_hash == api_key_hash)
     result = await db.execute(query)
     return result.scalar_one_or_none()
 

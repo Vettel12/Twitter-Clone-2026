@@ -25,7 +25,8 @@ async def get_current_user(
 
     user = await crud.get_user_by_api_key(db, api_key)
     if not user:
-        logger.warning(f"Authentication failed: Invalid API Key '{api_key[:4]}...'")
+        # ✅ FIXED: Не логируем API key (даже первые 4 символа)
+        logger.warning("Authentication failed: Invalid API Key")
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
     logger.info(f"User authenticated: id={user.id}, name={user.name}")

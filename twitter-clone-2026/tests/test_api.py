@@ -32,7 +32,9 @@ async def test_get_by_id(client: AsyncClient, db_session: AsyncSession) -> None:
     Тест: Получение информации о пользователе по реальному ID.
     """
     # 1. Достаем ID созданного в фикстуре юзера из базы
-    result = await db_session.execute(select(User).where(User.api_key == "test"))
+    result = await db_session.execute(
+        select(User).where(User.api_key_hash == User.hash_api_key("test"))
+    )
     user = result.scalar_one()
     user_id = user.id
 
@@ -73,7 +75,7 @@ async def test_follow_user(client: AsyncClient, db_session: AsyncSession) -> Non
     Тест: Подписка на другого пользователя.
     """
     # 1. Создаем второго пользователя НАПРЯМУЮ в БД (без API)
-    target_user = User(name="TargetUser", api_key="target_key")
+    target_user = User(name="TargetUser", api_key_hash=User.hash_api_key("target_key"))
     db_session.add(target_user)
     await db_session.flush()  # Важно! Генерирует ID, но не коммитит транзакцию
 
@@ -101,7 +103,9 @@ async def test_unfollow_user(client: AsyncClient, db_session: AsyncSession) -> N
     Тест: Отписка от пользователя.
     """
     # 1. Создаем и сразу подписываемся (подготовка состояния)
-    target_user = User(name="UnfollowTarget", api_key="unfollow_key")
+    target_user = User(
+        name="UnfollowTarget", api_key_hash=User.hash_api_key("unfollow_key")
+    )
     db_session.add(target_user)
     await db_session.flush()
     target_id = target_user.id
@@ -131,7 +135,7 @@ async def test_upload_media(client: AsyncClient) -> None:
     # 2. Выполнение запроса
     response = await client.post(
         "/api/medias",
-        files={"file": ("test.jpg", b"test data", "image/jpeg")},
+        files={"file": ("test.jpg", b"\xff\xd8\xff\xe0\x00\x10JFIF", "image/jpeg")},
         headers=headers,
     )
 
@@ -152,7 +156,7 @@ async def test_create_tweet_with_media(client: AsyncClient) -> None:
     # 1. Сначала загружаем медиа, чтобы получить валидный ID
     media_response = await client.post(
         "/api/medias",
-        files={"file": ("test.jpg", b"test data", "image/jpeg")},
+        files={"file": ("test.jpg", b"\xff\xd8\xff\xe0\x00\x10JFIF", "image/jpeg")},
         headers=headers,
     )
     assert media_response.status_code == 200
@@ -310,7 +314,7 @@ async def test_delete_foreign_tweet(
 
     # 2. Создаем второго пользователя (Злоумышленник)
 
-    hacker = User(name="Hacker", api_key="hacker_key")
+    hacker = User(name="Hacker", api_key_hash=User.hash_api_key("hacker_key"))
     db_session.add(hacker)
     await db_session.flush()
 

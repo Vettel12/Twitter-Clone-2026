@@ -39,15 +39,19 @@ async def clear_db(db: AsyncSession) -> None:
 
 
 async def seed_users(db: AsyncSession) -> list[User]:
-    """Создание пользователей."""
+    """Создание пользователей с хешированными API ключами."""
     print(f"Creating {NUM_USERS} users...")
     users = []
 
-    test_user = User(name="Valera", api_key="test")
+    # Test user with hashed API key
+    test_api_key = "test"
+    test_user = User(name="Valera", api_key_hash=User.hash_api_key(test_api_key))
     users.append(test_user)
 
+    # Regular users with generated and hashed API keys
     for _ in range(NUM_USERS - 1):
-        user = User(name=fake.user_name(), api_key=fake.uuid4())
+        api_key = User.generate_api_key()
+        user = User(name=fake.user_name(), api_key_hash=User.hash_api_key(api_key))
         users.append(user)
 
     db.add_all(users)

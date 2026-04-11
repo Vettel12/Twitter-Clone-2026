@@ -1,3 +1,5 @@
+import secrets
+from hashlib import sha256
 from typing import TYPE_CHECKING, List
 
 from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
@@ -10,11 +12,18 @@ if TYPE_CHECKING:
 
 
 class User(Base):
+    """
+    User model with secure API key hashing.
+    ✅ FIXED: API ключи хешируются с SHA256
+    """
+
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(50), nullable=False)
-    api_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+
+    # ✅ NEW: Хеш API ключа вместо plain text
+    api_key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
 
     # Кто подписан на меня (список объектов User)
     followers: Mapped[List["User"]] = relationship(
@@ -41,6 +50,25 @@ class User(Base):
 
     # Связь с лайками пользователя
     likes: Mapped[List["Like"]] = relationship(back_populates="user")
+
+    # ============================================================
+    # STATIC METHODS FOR SECURE API KEY HANDLING
+    # ============================================================
+
+    @staticmethod
+    def hash_api_key(api_key: str) -> str:
+        """Hash an API key using SHA256."""
+        return sha256(api_key.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def generate_api_key() -> str:
+        """Generate a new secure API key."""
+        return secrets.token_urlsafe(32)
+
+    def verify_api_key(self, api_key: str) -> bool:
+        """Verify if a provided API key matches the stored hash."""
+        provided_hash = self.hash_api_key(api_key)
+        return provided_hash == self.api_key_hash
 
 
 class Follower(Base):

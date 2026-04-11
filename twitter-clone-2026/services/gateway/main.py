@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Awaitable, Callable
 
 import uvicorn
 from fastapi import Depends, FastAPI, Request
@@ -13,8 +13,11 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 # Импортируем брокера и роутеры
+from libs.config import settings
 from libs.database import get_db
 from libs.kafka_conf import broker
 
@@ -28,10 +31,22 @@ setup_logging()
 
 DbSession = Depends(get_db)
 
-# 2. Создаем логгер для этого файла
-
-
 logger = logging.getLogger(__name__)
+
+
+# ✅ NEW: Security Headers Middleware
+async def add_security_headers(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = (
+        "max-age=31536000; includeSubDomains"
+    )
+    return response
 
 
 # Lifespan context manager для FastAPI
@@ -79,9 +94,9 @@ app = FastAPI(
     title="Twitter Clone 2026",
     description="Микросервисный клон Twitter (Modular Monolith)",
     version="1.0.0",
-    docs_url="/api/docs",           # ← Swagger UI
-    openapi_url="/api/openapi.json", # ← Схема API (ОБЯЗАТЕЛЬНО!)
-    redoc_url="/api/redoc",         # ← Опционально
+    docs_url="/api/docs",  # ← Swagger UI
+    openapi_url="/api/openapi.json",  # ← Схема API (ОБЯЗАТЕЛЬНО!)
+    redoc_url="/api/redoc",  # ← Опционально
     lifespan=lifespan,
 )
 
@@ -101,14 +116,18 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     )
 
 
-# Настройка CORS
+# Настройка CORS (✅ FIXED: Ограничено до конкретных origins)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=settings.cors_methods_list,
+    allow_headers=settings.cors_headers_list,
+    max_age=settings.cors_max_age,
 )
+
+# ✅ NEW: Добавляем security headers middleware
+app.add_middleware(BaseHTTPMiddleware, dispatch=add_security_headers)
 
 # Подключаем роутеры (API endpoints)
 app.include_router(users_router)
@@ -121,10 +140,12 @@ Instrumentator().instrument(app).expose(app)
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
 if os.path.exists(frontend_path):
     app.mount("/static", StaticFiles(directory=frontend_path), name="frontend-static")
+
     # Создаём redirect с / на /static/index.html
     @app.get("/")
-    async def serve_index():
+    async def serve_index() -> RedirectResponse:
         return RedirectResponse(url="/static/index.html")
+
 
 # Монтируем статические файлы для медиа
 media_path = os.path.join(os.path.dirname(__file__), "..", "..", "media")

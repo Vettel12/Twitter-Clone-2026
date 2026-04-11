@@ -10,10 +10,14 @@ COPY pyproject.toml ./
 # Создаем README, чтобы pip не ругался
 RUN echo "# Twitter Clone 2026" > README.md
 
+# Копируем весь код перед установкой
+COPY . .
+
 # Устанавливаем зависимости
 RUN pip install --no-cache-dir -e .
 
-COPY . .
+# Перекопируем скрипты чтобы гарантировать обновленную версию
+COPY scripts /app/scripts
 
 # --- Stage 2: Runtime ---
 FROM python:3.13-slim as runtime
