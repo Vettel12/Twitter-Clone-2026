@@ -30,6 +30,9 @@
 - [Мониторинг и Наблюдаемость](#-мониторинг-и-наблюдаемость)
 - [Нагрузочное Тестирование](#-нагрузочное-тестирование)
 - [Безопасность](#-безопасность)
+- [Плюсы и минусы архитектуры](#-плюсы-и-минусы-архитектуры)
+- [Проверка конфигурации](#-проверка-конфигурации)
+- [Развёртывание с нуля — пошаговая проверка](#-развёртывание-с-нуля--пошаговая-проверка)
 - [CI/CD и Качество Кода](#-cicd-и-качество-кода)
 - [Управление Жизненным Циклом](#-управление-жизненным-циклом)
   - [Как удалить и пересобрать с нуля](#как-удалить-и-пересобрать-с-нуля)
@@ -1319,16 +1322,35 @@ done
 
 ## 🛡 Безопасность
 
-### Реализованные практики
+### ✅ Реализовано
 
 | Практика | Описание |
 |----------|----------|
-| **Non-root контейнеры** | Backend запускается от `appuser` (UID 1000) |
-| **Kubernetes Secrets** | Пароли хранятся в зашифрованных Secrets |
+| **Non-root контейнеры** | Backend работает от `appuser` (UID 1000) |
+| **Kubernetes Secrets** | Пароли в Secrets, не в ConfigMap |
 | **SecurityContext** | `allowPrivilegeEscalation: false` |
-| **Resource Limits** | Ограничения CPU и памяти для каждого пода |
-| **Init Containers** | Проверка готовности инфраструктуры перед запуском |
-| **API Key аутентификация** | Простая, но эффективная для демо |
+| **Resource Limits** | CPU и память ограничены для каждого Pod |
+| **Init Containers** | Проверка инфраструктуры перед запуском |
+| **API Key хеширование** | Ключи хранятся в захешированном виде (SHA-256) |
+| **Security Headers** | X-Frame-Options, HSTS, X-Content-Type-Options |
+| **CORS ограничения** | Не `*`, а конкретные origins |
+| **Валидация файлов** | Расширение + размер + magic bytes |
+| **SQL ORM** | SQLAlchemy — защита от SQL-инъекций |
+| **Correlation ID** | Сквозной трейсинг запросов |
+| **Bandit scan** | 0 уязвимостей в коде |
+
+### ⚠️ Известные ограничения
+
+| Проблема | Риск | Статус |
+|----------|------|--------|
+| SHA-256 без соли для API-ключей | Средний | Рекомендуется PBKDF2 |
+| Нет HTTPS/TLS в Ingress | Высокий | Нужен cert-manager |
+| Нет Rate Limiting | Высокий | Рекомендуется slowapi |
+| Redis без `requirepass` | Средний | Рекомендуется аутентификация |
+| Kafka PLAINTEXT | Средний | Рекомендуется SASL_SSL |
+| Секреты в истории Git | Критический | `.env` удалён, но остался в истории |
+
+📋 **Полный анализ безопасности** — в [SECURITY.md](SECURITY.md).
 
 ### Пример SecurityContext
 ```yaml
@@ -1342,13 +1364,11 @@ securityContext:
 
 ```bash
 # Bandit — поиск уязвимостей в коде
-bandit -r . -ll
+bandit -r services/ libs/ -ll
 
 # Safety — проверка зависимостей на CVE
 safety check
 ```
-
-Подробнее о проверке безопасности — в разделе [CI/CD и Качество Кода](#-cicd-и-качество-кода).
 
 ---
 
@@ -1564,6 +1584,221 @@ docker-compose -f deploy/docker-compose.yml down -v
 
 ---
 
+## ⚖️ Плюсы и минусы архитектуры
+
+### ✅ Сильные стороны
+
+| Аспект | Описание |
+|--------|----------|
+| **Асинхронность** | Весь стек — FastAPI, asyncpg, redis.asyncio — работает асинхронно |
+| **Cache-Aside** | Надёжная стратегия кэширования с TTL и fallback на БД |
+| **Идемпотентность** | Kafka consumer с deduplication, Like с проверкой до insert |
+| **Качество кода** | Ruff + MyPy + Bandit + 21 тест — всё проходит |
+| **Observability** | Correlation ID, Prometheus метрики, structured logging (JSON) |
+| **Безопасность контейнеров** | Non-root, SecurityContext, resource limits |
+| **Масштабируемость** | HPA (2–10 реплик), stateless backend |
+| **Миграции** | Alembic с async поддержкой |
+| **DRY** | Единый модуль auth, cache_keys, централизованная инвалидация |
+
+### ⚠️ Ограничения и области улучшения
+
+| Аспект | Текущее состояние | Как улучшить |
+|--------|-------------------|--------------|
+| **Redis HA** | Single replica | Redis Sentinel или Cluster |
+| **HTTPS** | Не настроен | cert-manager + Let's Encrypt |
+| **Rate Limiting** | Отсутствует | slowapi или Nginx limit_req |
+| **API-ключи** | SHA-256 без соли | PBKDF2 / argon2 |
+| **Kafka** | PLAINTEXT, 1 брокер | SASL_SSL, cluster |
+| **Событийная модель** | Consumer-заглушка с dedup | Полная асинхронная обработка |
+| **Тесты** | 21 интеграционный | Добавить unit, contract тесты |
+| **CI/CD** | GitLab CI конфиг | GitHub Actions pipeline |
+
+### 📚 Дополнительные документы
+
+| Документ | Описание |
+|----------|----------|
+| [SECURITY.md](SECURITY.md) | Полный аудит безопасности, уязвимости, рекомендации |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Схемы взаимодействия, жизненный цикл запроса, кэширование |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Частые проблемы и решения для Docker Compose, K8s, тестов |
+
+---
+
+## 🔍 Проверка конфигурации
+
+### Соответствие файлов
+
+| Файл | Соответствует проекту | Замечания |
+|------|----------------------|-----------|
+| `.env.example` | ✅ Да | Содержит все переменные из `libs/config.py` |
+| `pyproject.toml` | ✅ Да | Все зависимости используются в импортах |
+| `01-configmap.yaml` | ✅ Да | Не содержит секретов — только хосты и порты |
+| `02-secrets.yaml` | ⚠️ В .gitignore | Убран из tracking, но доступен для проверки |
+| `docker-compose.yml` | ✅ Да | Zookeeper + Kafka, Redis, Postgres |
+| `docker-compose.prod.yml` | ⚠️ Без Redis | Упрощённый конфиг для «production» |
+| `Dockerfile` | ✅ Да | Multi-stage, non-root |
+| `nginx.conf` | ✅ Да | Проксирует API, раздаёт статику |
+
+### Замечания к конфигурации
+
+1. **`docker-compose.prod.yml`** не включает Redis, хотя приложение требует его для работы. Рекомендуется добавить Redis и в prod-конфиг.
+
+2. **`docker-compose.yml`** использует Zookeeper + Kafka, тогда как K8s манифесты — KRaft (без Zookeeper). Оба подхода рабочие, но отличаются.
+
+3. **Backend liveness probe** (`path: /, port: 8000`) работает — endpoint `/` перенаправляет на `/static/index.html`. Для API лучше использовать `/api/healthcheck`.
+
+### Проверка `.env` → `libs/config.py`
+
+| Переменная | `.env.example` | `config.py` default | Статус |
+|-----------|---------------|---------------------|--------|
+| `POSTGRES_USER` | ✅ | Required | ✅ |
+| `POSTGRES_PASSWORD` | ✅ | Required | ✅ |
+| `POSTGRES_DB` | ✅ | Required | ✅ |
+| `POSTGRES_HOST` | ✅ | `localhost` | ✅ |
+| `POSTGRES_PORT` | ✅ | `5432` | ✅ |
+| `SECRET_KEY` | ✅ | Required | ✅ |
+| `KAFKA_BOOTSTRAP_SERVERS` | ✅ | `kafka:9092` | ✅ |
+| `REDIS_URL` | ✅ | `redis://redis:6379/0` | ✅ |
+| `ALLOWED_ORIGINS` | ✅ | `http://localhost:3000` | ✅ |
+| `SQLALCHEMY_ECHO` | ✅ | `False` | ✅ |
+| `LOG_API_KEYS` | ✅ | `False` | ✅ |
+
+---
+
+## 🚀 Развёртывание с нуля — пошаговая проверка
+
+### Способ 1: Docker Compose (рекомендуется для проверки)
+
+**Время:** 10–15 минут
+
+```bash
+# 1. Клонировать репозиторий
+git clone <URL>
+cd twitter-clone-2026
+
+# 2. Создать .env из примера
+cp .env.example .env
+
+# 3. Запустить инфраструктуру и приложение
+docker-compose -f deploy/docker-compose.yml up --build -d
+
+# 4. Дождаться запуска (1–2 минуты)
+docker-compose -f deploy/docker-compose.yml ps
+# Все сервисы должны быть в состоянии "Up"
+
+# 5. Применить миграции
+docker-compose -f deploy/docker-compose.yml exec app alembic upgrade head
+
+# 6. Заполнить тестовыми данными
+docker-compose -f deploy/docker-compose.yml exec app python scripts/seed_db.py
+
+# 7. Проверить API
+curl -H "api-key: test" http://localhost:8000/api/users/me
+# Ожидаемый ответ: {"result": true, "user": {"id": 1, "name": "Valera", ...}}
+
+# 8. Открыть Swagger UI
+# http://localhost:8000/docs
+
+# 9. Проверить Kafdrop (Kafka UI)
+# http://localhost:9000
+```
+
+**Что проверяется:**
+- ✅ Сборка Docker образа
+- ✅ Запуск PostgreSQL, Redis, Kafka, Zookeeper
+- ✅ Подключение приложения к инфраструктуре
+- ✅ Применение миграций
+- ✅ API отвечает
+- ✅ Kafka работает
+
+### Способ 2: Kubernetes
+
+**Время:** 20–30 минут
+
+```bash
+# 1. Собрать образы
+docker build -t twitter-clone-2026:latest .
+docker build -f Dockerfile.frontend -t twitter-clone-frontend:latest .
+
+# 2. Создать namespace и конфигурацию
+kubectl apply -f deploy/k8s/00-namespace.yaml
+kubectl apply -f deploy/k8s/01-configmap.yaml
+kubectl apply -f deploy/k8s/02-secrets.yaml
+
+# 3. Развернуть инфраструктуру
+kubectl apply -f deploy/k8s/03-postgres.yaml
+kubectl apply -f deploy/k8s/04-redis.yaml
+kubectl apply -f deploy/k8s/05-kafka.yaml
+
+# 4. Дождаться готовности (проверить)
+kubectl wait --for=condition=ready pod -l app=postgres -n twitter-clone --timeout=120s
+kubectl wait --for=condition=ready pod -l app=redis -n twitter-clone --timeout=120s
+kubectl wait --for=condition=ready pod -l app=kafka -n twitter-clone --timeout=180s
+
+# 5. Развернуть backend (Init Container сам подождёт инфраструктуру)
+kubectl apply -f deploy/k8s/07-backend.yaml
+
+# 6. Проверить
+kubectl get pods -n twitter-clone
+# backend должен быть в состоянии Running
+
+# 7. Пробросить порт
+kubectl port-forward svc/backend-service -n twitter-clone 8000:8000
+
+# 8. Проверить API
+curl -H "api-key: test" http://localhost:8000/api/healthcheck
+```
+
+### Способ 3: Локальная разработка (без Docker)
+
+**Время:** 5 минут
+
+**Требования:** Python 3.13, PostgreSQL, Redis, Kafka запущены отдельно
+
+```bash
+# 1. Создать venv
+python -m venv venv
+source venv/Scripts/activate   # Windows
+# source venv/bin/activate     # Linux/macOS
+
+# 2. Установить зависимости
+pip install -e ".[dev]"
+
+# 3. Настроить .env для локальной работы
+# POSTGRES_HOST=localhost
+# REDIS_URL=redis://localhost:6379/0
+# KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+
+# 4. Создать БД и применить миграции
+createdb twitter_clone_db
+alembic upgrade head
+
+# 5. Запустить
+uvicorn services.gateway.main:app --reload --host 0.0.0.0 --port 8000
+
+# 6. Swagger UI: http://localhost:8000/docs
+
+# 7. Запустить тесты
+python -m pytest tests/ -v
+```
+
+### Чек-лист полной проверки
+
+| Шаг | Команда | Ожидаемый результат |
+|-----|---------|---------------------|
+| БД | `curl .../api/healthcheck` | `{"status": "ok"}` |
+| Пользователь | `curl -H "api-key: test" .../api/users/me` | Профиль TestUser |
+| Твит | `curl -X POST .../api/tweets -d ...` | `{"tweet_id": N}` |
+| Лента | `curl .../api/tweets` | Список твитов |
+| Лайк | `curl -X POST .../tweets/1/likes` | `{"result": true}` |
+| Кэш | Повторный GET `/api/tweets` | Быстрее (cache HIT) |
+| Подписка | `curl -X POST .../users/2/follow` | `{"result": true}` |
+| Тесты | `pytest tests/ -v` | 21 passed |
+| Линтер | `ruff check .` | All checks passed |
+| Типы | `mypy .` | Success, no issues |
+| Безопасность | `bandit -r services/ libs/` | No issues |
+
+---
+
 ## 📁 Структура Проекта
 
 ```
@@ -1706,12 +1941,19 @@ locust -f locustfile.py --host=http://localhost:8000
 
 | Файл | Что показывает |
 |------|----------------|
-| [`Dockerfile`](Dockerfile:1) | Multi-stage build, security best practices |
+| [`Dockerfile`](Dockerfile:1) | Multi-stage build, non-root, security best practices |
 | [`deploy/k8s/07-backend.yaml`](deploy/k8s/07-backend.yaml:1) | K8s Deployment, HPA, Probes, SecurityContext |
-| [`services/tweets/app/api/routes.py`](services/tweets/app/api/routes.py:1) | FastAPI async endpoints, caching |
+| [`services/tweets/app/api/routes.py`](services/tweets/app/api/routes.py:1) | FastAPI async endpoints, cache-aside с lock |
+| [`services/tweets/app/crud.py`](services/tweets/app/crud.py:1) | CRUD с SQL-комментариями, Kafka publish, инвалидация |
+| [`libs/cache_keys.py`](libs/cache_keys.py:1) | Централизованный кэш: ключи, lock, метрики Prometheus |
+| [`libs/auth.py`](libs/auth.py:1) | Единая аутентификация с lazy-импортом |
+| [`libs/correlation_id.py`](libs/correlation_id.py:1) | Сквозной трейсинг запросов |
 | [`libs/database.py`](libs/database.py:1) | Async SQLAlchemy setup |
 | [`pyproject.toml`](pyproject.toml:1) | Modern Python packaging, dev dependencies |
-| [`locustfile.py`](locustfile.py:1) | Load testing scenarios |
+| [`locustfile.py`](locustfile.py:1) | Нагрузочные тесты |
+| [SECURITY.md](SECURITY.md) | Полный аудит безопасности |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Схемы и принципы работы |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Проблемы и решения |
 
 ---
 

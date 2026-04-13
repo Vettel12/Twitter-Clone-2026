@@ -1,7 +1,8 @@
 import asyncio
 import os
 import sys
-from typing import AsyncGenerator, Generator
+from typing import Any, AsyncGenerator, Generator
+from unittest.mock import AsyncMock, patch
 
 # === ВАЖНО: Переопределяем хосты для локального запуска тестов ===
 # Это нужно сделать ДО импорта settings
@@ -35,6 +36,20 @@ TEST_DB_NAME = settings.postgres_db + "_test"
 TEST_DATABASE_URL = settings.sqlalchemy_database_url.replace(
     settings.postgres_db, TEST_DB_NAME
 )
+
+
+# --- MOCK KAFKA PUBLISHING ---
+async def mock_kafka_publish(*args: Any, **kwargs: Any) -> None:
+    """Заглушка для Kafka публикации в тестах."""
+    pass
+
+
+# --- FIX REDIS SINGLETON ---
+def reset_redis_singleton() -> None:
+    """Сбрасывает глобальный синглтон Redis, чтобы избежать проблем с event loop."""
+    from libs import redis_client as redis_module
+
+    redis_module.redis_client = None
 
 
 # --- 1. SETUP DATABASE (Once per Session) ---
@@ -89,6 +104,9 @@ def setup_test_database() -> Generator[None, None, None]:
 # --- 2. DB SESSION (Per Test) ---
 @pytest.fixture(scope="function")
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
+    # Сбрасываем Redis синглтон перед каждым тестом
+    reset_redis_singleton()
+
     engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
 
     async with engine.connect() as connection:
@@ -125,13 +143,15 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
         await trans.rollback()
 
     await engine.dispose()
+    # Сбрасываем Redis синглтон после теста
+    reset_redis_singleton()
 
 
 # --- 3. CLIENT (Per Test) ---
 @pytest.fixture(scope="function")
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """
-    Клиент с подменой БД.
+    Клиент с подменой БД и моком Kafka.
     """
 
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -139,10 +159,14 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 
     app.dependency_overrides[get_db] = override_get_db
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
-        yield ac
+    # Мокаем Kafka publishing, чтобы избежать ошибок в тестах
+    with patch("libs.kafka_conf.broker.publish", new_callable=AsyncMock) as mock_pub:
+        mock_pub.side_effect = mock_kafka_publish
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            yield ac
 
     app.dependency_overrides.clear()
 
@@ -152,8 +176,14 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:
     """
     Подключенный клиент Redis для тестов.
+    Сбрасывает глобальный синглтон, чтобы избежать проблем с event loop.
     """
     import os
+
+    from libs import redis_client as redis_module
+
+    # Сбрасываем глобальный синглтон, чтобы создать новое подключение
+    redis_module.redis_client = None
 
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     client = redis.from_url(redis_url, decode_responses=True)
@@ -161,6 +191,8 @@ async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:
     yield client
 
     await client.close()
+    # Сбрасываем синглтон после теста
+    redis_module.redis_client = None
 
 
 # --- 5. KAFKA BROKER (Per Test) ---

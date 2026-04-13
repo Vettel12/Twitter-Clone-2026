@@ -1,14 +1,15 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import List
+from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TweetCreatedEvent(BaseModel):
     """Событие: Твит создан."""
 
-    event_id: str
-    event_time: datetime
+    event_id: str = Field(default_factory=lambda: str(uuid4()))
+    event_time: datetime = Field(default_factory=lambda: datetime.now(UTC))
     producer: str = "tweets-service"
     data: "TweetData"
 

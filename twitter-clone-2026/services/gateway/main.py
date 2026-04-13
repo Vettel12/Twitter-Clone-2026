@@ -1,9 +1,9 @@
 import asyncio
-import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Awaitable, Callable
 
+import structlog
 import uvicorn
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +18,7 @@ from starlette.responses import Response
 
 # Импортируем брокера и роутеры
 from libs.config import settings
+from libs.correlation_id import CorrelationIdMiddleware
 from libs.database import get_db
 from libs.kafka_conf import broker
 
@@ -31,7 +32,7 @@ setup_logging()
 
 DbSession = Depends(get_db)
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ✅ NEW: Security Headers Middleware
@@ -128,6 +129,9 @@ app.add_middleware(
 
 # ✅ NEW: Добавляем security headers middleware
 app.add_middleware(BaseHTTPMiddleware, dispatch=add_security_headers)
+
+# ✅ Correlation ID middleware для сквозного трейсинга
+app.add_middleware(CorrelationIdMiddleware)
 
 # Подключаем роутеры (API endpoints)
 app.include_router(users_router)

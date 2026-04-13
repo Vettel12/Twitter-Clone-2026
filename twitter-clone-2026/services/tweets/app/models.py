@@ -43,10 +43,14 @@ class Tweet(Base):
     author: Mapped["User"] = relationship(back_populates="tweets")
 
     # Связь с картинками. Один твит может иметь много картинок
-    media: Mapped[List["Media"]] = relationship(back_populates="tweet", lazy="selectin")
+    media: Mapped[List["Media"]] = relationship(
+        back_populates="tweet", lazy="selectin", cascade="all, delete-orphan"
+    )
 
     # Связь с лайками. Один твит может иметь много лайков
-    likes: Mapped[List["Like"]] = relationship(back_populates="tweet", lazy="selectin")
+    likes: Mapped[List["Like"]] = relationship(
+        back_populates="tweet", lazy="selectin", cascade="delete"
+    )
 
 
 class Media(Base):

@@ -5,7 +5,6 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    user: root
     ports:
       - "8000:8000"
     env_file:

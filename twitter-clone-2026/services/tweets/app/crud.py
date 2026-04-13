@@ -1,91 +1,122 @@
-import logging
+"""
+CRUD-операции для твитов, медиафайлов и лайков.
+
+Каждая функция содержит:
+- Описание на русском языке
+- SQL-эквивалент для понимания работы с базой данных
+- Корректные аннотации типов по PEP 484
+"""
+
+import os
 import uuid
 from pathlib import Path
-from typing import Any, List, Optional, cast
+from typing import Any, List, Optional, Tuple, cast
 
 import aiofiles
+import structlog
 from fastapi import UploadFile
 from sqlalchemy import delete, desc, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from libs.cache_keys import invalidate_user_and_followers_cache
 from libs.kafka_conf import TOPIC_TWEETS, broker
-from libs.redis_client import get_redis
-from libs.schemas import TweetData
+from libs.schemas import TweetCreatedEvent, TweetData
 from services.users.app.models import Follower
 
 from .models import Like, Media, Tweet
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
-# === CONSTANTS ===
+# === КОНСТАНТЫ ===
+
+# Допустимые расширения файлов изображений
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+# Максимальный размер файла — 10 МБ
+MAX_FILE_SIZE = 10 * 1024 * 1024
 
 
-# === CACHE UTILITIES ===
-async def invalidate_cache_keys(keys: List[str]) -> None:
-    """Delete cache keys with retry logic."""
-    if not keys:
-        return
-    try:
-        r = await get_redis()
-        await r.delete(*keys)
-        logger.info(f"Cache invalidated: {len(keys)} keys")
-    except Exception as e:
-        logger.error(f"Cache error: {e}")
+# === УТИЛИТЫ ===
 
 
 async def get_follower_ids(db: AsyncSession, user_id: int) -> List[int]:
-    """Get all followers of a user."""
+    """
+    Получить идентификаторы всех подписчиков пользователя.
+
+    SQL:
+        SELECT follower_id FROM followers WHERE followed_id = :user_id;
+
+    Args:
+        db: Асинхронная сессия базы данных.
+        user_id: Идентификатор пользователя, чьих подписчиков ищем.
+
+    Returns:
+        Список идентификаторов подписчиков.
+    """
     stmt = select(Follower.follower_id).where(Follower.followed_id == user_id)
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
 
-# --- MEDIA ---
+# === МЕДИАФАЙЛЫ ===
 
 
 async def save_media(db: AsyncSession, file: UploadFile) -> int:
     """
-    Сохраняет файл на диск с допушенной валидацией.
-    ✅ FIXED: Валидация типа, размера, и magic bytes
+    Сохранить файл изображения на диск с валидацией.
+
+    Выполняет:
+        1. Проверку расширения файла.
+        2. Проверку размера (макс. 10 МБ).
+        3. Проверку «магических байтов» (JPEG, PNG, GIF).
+        4. Сохранение с уникальным именем.
+        5. Запись метаданных в таблицу ``media``.
+
+    SQL (вставка):
+        INSERT INTO media (file_path) VALUES (:file_path);
+
+    Args:
+        db: Асинхронная сессия базы данных.
+        file: Загруженный файл изображения.
+
+    Returns:
+        Идентификатор сохранённого медиафайла.
+
+    Raises:
+        ValueError: Если файл не проходит валидацию.
     """
-    logger.info(f"Saving media file: {file.filename}")
+    logger.info("media_save_start", filename=file.filename)
 
-    # ✅ Валидация расширения
-    if file.filename:
-        ext = Path(file.filename).suffix.lower()
-        if ext not in ALLOWED_EXTENSIONS:
-            logger.warning(f"Invalid file extension: {ext}")
-            raise ValueError(f"Invalid file type: {ext}. Allowed: {ALLOWED_EXTENSIONS}")
-    else:
-        raise ValueError("Filename is required")
+    # --- Валидация расширения ---
+    if not file.filename:
+        raise ValueError("Имя файла обязательно")
 
-    # ✅ Валидация размера и получение контента
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        logger.warning("media_invalid_extension", extension=ext)
+        raise ValueError(f"Недопустимый тип файла: {ext}. Разрешены: {ALLOWED_EXTENSIONS}")
+
+    # --- Валидация размера и чтение содержимого ---
     content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        logger.warning(f"File too large: {len(content)} bytes")
-        raise ValueError(
-            f"File too large: {len(content)} bytes. Max: {MAX_FILE_SIZE} bytes"
-        )
-
     if len(content) == 0:
-        raise ValueError("File is empty")
+        raise ValueError("Файл пустой")
 
-    # ✅ Валидация magic bytes (проверка что это действительно изображение)
+    if len(content) > MAX_FILE_SIZE:
+        logger.warning("media_file_too_large", size=len(content))
+        raise ValueError(f"Файл слишком большой: {len(content)} байт. Максимум: {MAX_FILE_SIZE}")
+
+    # --- Проверка «магических байтов» ---
     valid_image = (
         content.startswith(b"\xff\xd8\xff")  # JPEG
         or content.startswith(b"\x89PNG")  # PNG
         or content.startswith(b"GIF")  # GIF
     )
-
     if not valid_image:
-        logger.warning("Invalid image content (magic bytes check failed)")
-        raise ValueError("Invalid image file (magic bytes check failed)")
+        logger.warning("media_invalid_magic_bytes")
+        raise ValueError("Недопустимый файл изображения (проверка магических байтов)")
 
-    # Сохраняем файл
+    # --- Сохранение на диск ---
     media_dir = Path("media")
     media_dir.mkdir(exist_ok=True, mode=0o755)
     unique_filename = f"{uuid.uuid4()}{ext}"
@@ -94,21 +125,20 @@ async def save_media(db: AsyncSession, file: UploadFile) -> int:
     async with aiofiles.open(file_path, "wb") as out_file:
         await out_file.write(content)
 
-    # Устанавливаем права на чтение для всех
-    import os
-
+    # Права на чтение для всех
     os.chmod(file_path, 0o644)
 
+    # --- Запись метаданных в базу ---
     db_media = Media(file_path=str(file_path))
     db.add(db_media)
     await db.commit()
     await db.refresh(db_media)
 
-    logger.info(f"Media saved safely with ID: {db_media.id}")
+    logger.info("media_save_success", media_id=db_media.id)
     return db_media.id
 
 
-# --- TWEETS ---
+# === ТВИТЫ ===
 
 
 async def create_tweet(
@@ -118,84 +148,153 @@ async def create_tweet(
     media_ids: Optional[List[int]] = None,
 ) -> int:
     """
-    Создает твит и привязывает к нему медиа-файлы.
-    ✅ FIXED: Инвалидирует кэш для ВСЕХподписчиков автора
-    """
-    logger.info(f"User {author_id} creating tweet")
+    Создать новый твит и привязать к нему медиафайлы.
 
+    SQL (вставка):
+        INSERT INTO tweets (content, author_id, created_at, updated_at)
+        VALUES (:content, :author_id, NOW(), NOW())
+        RETURNING id;
+
+    SQL (обновление медиа):
+        UPDATE media SET tweet_id = :tweet_id WHERE id IN (:media_ids);
+
+    После создания твита:
+        1. Инвалидирует кэш ленты автора и всех его подписчиков.
+        2. Публикует событие в Kafka для асинхронной обработки.
+
+    Args:
+        db: Асинхронная сессия базы данных.
+        author_id: Идентификатор автора твита.
+        content: Текст твита.
+        media_ids: Необязательный список идентификаторов медиафайлов.
+
+    Returns:
+        Идентификатор созданного твита.
+    """
+    logger.info("tweet_create_start", author_id=author_id)
+
+    # --- Вставка твита ---
     new_tweet = Tweet(content=content, author_id=author_id)
     db.add(new_tweet)
     await db.flush()
 
+    # --- Привязка медиафайлов ---
     if media_ids:
         stmt = (
-            update(Media).where(Media.id.in_(media_ids)).values(tweet_id=new_tweet.id)
+            update(Media)
+            .where(Media.id.in_(media_ids))
+            .values(tweet_id=new_tweet.id)
         )
         await db.execute(stmt)
 
     await db.commit()
 
-    # === INVALIDATE CACHE (FIXED) ===
+    # --- Инвалидация кэша ---
     try:
-        cache_keys = [f"feed:{author_id}"]
-        # ✅ НОВОЕ: Получаем всех подписчиков и инвалидируем их кэш
         follower_ids = await get_follower_ids(db, author_id)
-        if follower_ids:
-            cache_keys.extend([f"feed:{fid}" for fid in follower_ids])
-        await invalidate_cache_keys(cache_keys)
+        await invalidate_user_and_followers_cache(author_id, follower_ids)
     except Exception as e:
-        logger.error(f"Cache invalidation error: {e}")
-    # =================================
+        logger.error("tweet_cache_invalidation_error", error=str(e))
 
-    # === FASTSTREAM PRODUCER ===
+    # --- Публикация события в Kafka ---
     try:
-        # Создаем объект события (Pydantic модель)
-        event_data = TweetData(
-            tweet_id=new_tweet.id,
-            author_id=author_id,
-            content=content,
-            media_ids=media_ids or [],
+        event = TweetCreatedEvent(
+            data=TweetData(
+                tweet_id=new_tweet.id,
+                author_id=author_id,
+                content=content,
+                media_ids=media_ids or [],
+            )
         )
-
-        logger.info(f"Publishing event to Kafka topic '{TOPIC_TWEETS}'")
-        await broker.publish(event_data, topic=TOPIC_TWEETS)
-        logger.info("Event published successfully")
-
+        logger.info(
+            "kafka_publish_start",
+            topic=TOPIC_TWEETS,
+            event_id=event.event_id,
+        )
+        await broker.publish(event.model_dump(), topic=TOPIC_TWEETS)
+        logger.info("kafka_publish_success", event_id=event.event_id)
     except Exception as e:
-        logger.error(f"Failed to publish event to Kafka: {e}", exc_info=True)
-    # ===========================
+        logger.error("kafka_publish_error", error=str(e), exc_info=True)
 
     return new_tweet.id
 
 
-async def delete_tweet(db: AsyncSession, user_id: int, tweet_id: int) -> bool:
+async def delete_tweet(
+    db: AsyncSession, user_id: int, tweet_id: int
+) -> Tuple[bool, List[int]]:
     """
-    Удаляет твит, если пользователь — автор.
-    """
-    logger.info(f"User {user_id} attempting to delete tweet {tweet_id}")
+    Удалить твит, если текущий пользователь является его автором.
 
+    SQL (поиск):
+        SELECT * FROM tweets WHERE id = :tweet_id LIMIT 1;
+
+    SQL (удаление):
+        DELETE FROM tweets WHERE id = :tweet_id;
+
+    Args:
+        db: Асинхронная сессия базы данных.
+        user_id: Идентификатор текущего пользователя.
+        tweet_id: Идентификатор удаляемого твита.
+
+    Returns:
+        Кортеж (успех, список идентификаторов подписчиков автора).
+
+    Raises:
+        PermissionError: Если пользователь не является автором твита.
+    """
+    logger.info("tweet_delete_attempt", user_id=user_id, tweet_id=tweet_id)
+
+    # --- Поиск твита ---
     result = await db.execute(select(Tweet).where(Tweet.id == tweet_id))
     tweet = result.scalar_one_or_none()
 
     if not tweet:
-        logger.warning(f"Tweet {tweet_id} not found")
-        return False
+        logger.warning("tweet_delete_not_found", tweet_id=tweet_id)
+        return False, []
 
     if tweet.author_id != user_id:
-        logger.warning(f"User {user_id} permission denied for tweet {tweet_id}")
+        logger.warning("tweet_delete_permission_denied", user_id=user_id, tweet_id=tweet_id)
         raise PermissionError("Вы не можете удалить чужой твит")
 
+    # --- Удаление ---
+    author_id = tweet.author_id
     await db.delete(tweet)
     await db.commit()
-    logger.info(f"Tweet {tweet_id} deleted")
-    return True
+    logger.info("tweet_delete_success", tweet_id=tweet_id)
+
+    # --- Подписчики автора для инвалидации кэша ---
+    follower_ids = await get_follower_ids(db, author_id)
+    return True, follower_ids
 
 
 async def get_feed(db: AsyncSession, user_id: int, limit: int = 100) -> List[Tweet]:
     """
-    Получает ленту твитов для пользователя с сортировкой по времени создания.
+    Получить ленту твитов для пользователя.
+
+    Включает твиты авторов, на которых подписан пользователь,
+    а также собственные твиты пользователя.
+
+    SQL:
+        SELECT tweets.*, users.*, media.*, likes.*, users_likes.*
+        FROM tweets
+        LEFT OUTER JOIN followers ON followers.followed_id = tweets.author_id
+        LEFT OUTER JOIN users AS users ON tweets.author_id = users.id
+        LEFT OUTER JOIN media ON media.tweet_id = tweets.id
+        LEFT OUTER JOIN likes ON likes.tweet_id = tweets.id
+        LEFT OUTER JOIN users AS users_likes ON likes.user_id = users_likes.id
+        WHERE followers.follower_id = :user_id OR tweets.author_id = :user_id
+        ORDER BY tweets.created_at DESC
+        LIMIT :limit;
+
+    Args:
+        db: Асинхронная сессия базы данных.
+        user_id: Идентификатор пользователя.
+        limit: Максимальное количество твитов (по умолчанию 100).
+
+    Returns:
+        Список объектов Tweet, отсортированных по дате создания.
     """
-    logger.info(f"Fetching feed for user {user_id}")
+    logger.info("feed_fetch_start", user_id=user_id)
 
     stmt = (
         select(Tweet)
@@ -205,7 +304,12 @@ async def get_feed(db: AsyncSession, user_id: int, limit: int = 100) -> List[Twe
             selectinload(Tweet.likes).selectinload(Like.user),
         )
         .join(Follower, Follower.followed_id == Tweet.author_id, isouter=True)
-        .where(or_(Follower.follower_id == user_id, Tweet.author_id == user_id))
+        .where(
+            or_(
+                Follower.follower_id == user_id,
+                Tweet.author_id == user_id,
+            )
+        )
         .order_by(desc(Tweet.created_at))
         .limit(limit)
     )
@@ -213,14 +317,35 @@ async def get_feed(db: AsyncSession, user_id: int, limit: int = 100) -> List[Twe
     result = await db.execute(stmt)
     tweets = result.scalars().unique().all()
 
+    logger.info("feed_fetch_success", user_id=user_id, tweet_count=len(tweets))
     return list(tweets)
 
 
 async def get_tweet_by_id(db: AsyncSession, tweet_id: int) -> Optional[Tweet]:
     """
-    Получает твит по ID со всеми связанными данными (автор, медиа, лайки).
+    Получить твит по идентификатору со всеми связанными данными.
+
+    SQL:
+        SELECT tweets.*, users.*, media.*, likes.*, users_likes.*
+        FROM tweets
+        LEFT OUTER JOIN users ON tweets.author_id = users.id
+        LEFT OUTER JOIN media ON media.tweet_id = tweets.id
+        LEFT OUTER JOIN likes ON likes.tweet_id = tweets.id
+        LEFT OUTER JOIN users AS users_likes ON likes.user_id = users_likes.id
+        WHERE tweets.id = :tweet_id;
+
+    Параметр ``populate_existing=True`` заставляет SQLAlchemy перечитать
+    объект из базы, даже если он уже присутствует в ``identity_map``.
+    Это важно после операций like/unlike.
+
+    Args:
+        db: Асинхронная сессия базы данных.
+        tweet_id: Идентификатор твита.
+
+    Returns:
+        Объект Tweet или None, если твит не найден.
     """
-    logger.info(f"Fetching tweet {tweet_id}")
+    logger.info("tweet_fetch_by_id", tweet_id=tweet_id)
 
     stmt = (
         select(Tweet)
@@ -230,42 +355,104 @@ async def get_tweet_by_id(db: AsyncSession, tweet_id: int) -> Optional[Tweet]:
             selectinload(Tweet.likes).selectinload(Like.user),
         )
         .where(Tweet.id == tweet_id)
+        .execution_options(populate_existing=True)
     )
 
     result = await db.execute(stmt)
-    tweet = result.scalar_one_or_none()
-
-    return tweet
+    return result.scalar_one_or_none()
 
 
-# --- LIKES ---
+# === ЛАЙКИ ===
 
 
 async def add_like(db: AsyncSession, user_id: int, tweet_id: int) -> bool:
-    logger.info(f"User {user_id} liking tweet {tweet_id}")
+    """
+    Добавить лайк к твиту.
 
+    Перед вставкой проверяет:
+        1. Существование твита.
+        2. Отсутствие повторного лайка (составной первичный ключ).
+
+    SQL (проверка твита):
+        SELECT * FROM tweets WHERE id = :tweet_id LIMIT 1;
+
+    SQL (проверка лайка):
+        SELECT * FROM likes WHERE user_id = :user_id AND tweet_id = :tweet_id LIMIT 1;
+
+    SQL (вставка):
+        INSERT INTO likes (user_id, tweet_id) VALUES (:user_id, :tweet_id);
+
+    Args:
+        db: Асинхронная сессия базы данных.
+        user_id: Идентификатор пользователя, ставящего лайк.
+        tweet_id: Идентификатор твита.
+
+    Returns:
+        True, если лайк успешно добавлен; False — если твит не найден или уже лайкнут.
+    """
+    logger.info("like_add_start", user_id=user_id, tweet_id=tweet_id)
+
+    # --- Проверка существования твита ---
     tweet_res = await db.execute(select(Tweet).where(Tweet.id == tweet_id))
     if not tweet_res.scalar_one_or_none():
+        logger.warning("like_add_failed", reason="tweet_not_found", tweet_id=tweet_id)
         return False
 
+    # --- Проверка на повторный лайк ---
+    existing = await db.execute(
+        select(Like).where(
+            Like.user_id == user_id,
+            Like.tweet_id == tweet_id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        logger.warning(
+            "like_add_failed",
+            reason="already_liked",
+            user_id=user_id,
+            tweet_id=tweet_id,
+        )
+        return False
+
+    # --- Вставка лайка ---
     like = Like(user_id=user_id, tweet_id=tweet_id)
     db.add(like)
-    try:
-        await db.commit()
-        return True
-    except Exception:
-        await db.rollback()
-        return False
+    await db.commit()
+
+    logger.info("like_add_success", user_id=user_id, tweet_id=tweet_id)
+    return True
 
 
 async def remove_like(db: AsyncSession, user_id: int, tweet_id: int) -> bool:
-    logger.info(f"User {user_id} unliking tweet {tweet_id}")
+    """
+    Удалить лайк с твита.
 
-    stmt = delete(Like).where(Like.user_id == user_id, Like.tweet_id == tweet_id)
-    result = cast(CursorResult[Any], await db.execute(stmt))
+    SQL (удаление):
+        DELETE FROM likes
+        WHERE user_id = :user_id AND tweet_id = :tweet_id;
+
+    Args:
+        db: Асинхронная сессия базы данных.
+        user_id: Идентификатор пользователя.
+        tweet_id: Идентификатор твита.
+
+    Returns:
+        True, если лайк удалён; False — если лайк не найден.
+    """
+    logger.info("like_remove_start", user_id=user_id, tweet_id=tweet_id)
+
+    stmt = delete(Like).where(
+        Like.user_id == user_id,
+        Like.tweet_id == tweet_id,
+    )
+    result = cast("CursorResult[Any]", await db.execute(stmt))
     await db.commit()
 
-    if result.rowcount > 0:
-        return True
-
-    return False
+    success = result.rowcount > 0
+    logger.info(
+        "like_remove_result",
+        user_id=user_id,
+        tweet_id=tweet_id,
+        deleted=success,
+    )
+    return success

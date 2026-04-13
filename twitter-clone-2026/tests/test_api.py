@@ -362,7 +362,8 @@ async def test_like_twice(client: AsyncClient) -> None:
     data = r2.json()
     assert data["result"] is False
     assert "error_message" in data
-    assert "already" in data["error_message"].lower()
+    # Сообщение на русском: содержит "уже"
+    assert "уже" in data["error_message"].lower()
 
 
 @pytest.mark.asyncio
@@ -381,11 +382,8 @@ async def test_like_nonexistent_tweet(client: AsyncClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["result"] is False
-    # Проверим, что в сообщении есть намек на ошибку
-    assert (
-        "not found" in data["error_message"].lower()
-        or "cannot" in data["error_message"].lower()
-    )
+    # Сообщение на русском: содержит "не найден"
+    assert "не найден" in data["error_message"].lower()
 
 
 @pytest.mark.asyncio
@@ -456,3 +454,157 @@ async def test_kafka_consumer_tweet_creation(client: AsyncClient) -> None:
     # Твит создался успешно - это означает, что Kafka publishing
     # внутри приложения работает (если бы Kafka была недоступна,
     # приложение бы вернуло ошибку)
+
+
+@pytest.mark.asyncio
+async def test_like_invalidates_feed_cache(
+    client: AsyncClient, db_session: AsyncSession, redis_client: "redis.Redis[str]"
+) -> None:
+    """
+    Тест: Проверка, что лайк твита инвалидирует кэш ленты.
+    """
+    # Получаем реальный ID тестового пользователя
+    result = await db_session.execute(
+        select(User).where(User.api_key_hash == User.hash_api_key("test"))
+    )
+    test_user = result.scalar_one()
+    user_id = test_user.id
+
+    headers = {"api-key": "test"}
+
+    # 1. Создаем твит
+    tweet_data = {"tweet_data": "Cache test tweet!", "tweet_media_ids": []}
+    response = await client.post("/api/tweets", json=tweet_data, headers=headers)
+    tweet_id = response.json()["tweet_id"]
+
+    # 2. Получаем ленту, чтобы кэш записался
+    feed_response = await client.get("/api/tweets", headers=headers)
+    assert feed_response.status_code == 200
+
+    # 3. Проверяем, что кэш записался
+    cache_key = f"feed:{user_id}"
+    cached_data = await redis_client.get(cache_key)
+    assert cached_data is not None, "Cache should be populated after feed request"
+
+    # 4. Лайкаем твит
+    like_response = await client.post(f"/api/tweets/{tweet_id}/likes", headers=headers)
+    assert like_response.status_code == 200
+    assert like_response.json()["result"] is True
+
+    # 5. Проверяем, что кэш инвалидирован
+    cached_after_like = await redis_client.get(cache_key)
+    assert cached_after_like is None, "Cache should be invalidated after like"
+
+    # 6. Проверяем, что лента теперь содержит лайк
+    feed_response2 = await client.get("/api/tweets", headers=headers)
+    tweets = feed_response2.json()["tweets"]
+    liked_tweet = next((t for t in tweets if t["id"] == tweet_id), None)
+    assert liked_tweet is not None
+    assert len(liked_tweet["likes"]) >= 1
+    like_names = [like["name"] for like in liked_tweet["likes"]]
+    assert test_user.name in like_names
+
+
+@pytest.mark.asyncio
+async def test_like_invalidates_author_feed_cache(
+    client: AsyncClient, db_session: AsyncSession, redis_client: "redis.Redis[str]"
+) -> None:
+    """
+    Тест: Лайк чужого твита инвалидирует кэш лайкера.
+    """
+    # Получаем ID тестового пользователя
+    result = await db_session.execute(
+        select(User).where(User.api_key_hash == User.hash_api_key("test"))
+    )
+    test_user = result.scalar_one()
+    test_user_id = test_user.id
+
+    # 1. Создаем второго пользователя
+    author_user = User(name="AuthorUser", api_key_hash=User.hash_api_key("author_key"))
+    db_session.add(author_user)
+    await db_session.flush()
+    author_id = author_user.id
+
+    # 2. Подписываемся на автора (чтобы его твиты попали в нашу ленту)
+    headers_test = {"api-key": "test"}
+    await client.post(f"/api/users/{author_id}/follow", headers=headers_test)
+
+    # 3. Создаем твит от имени автора
+    headers_author = {"api-key": "author_key"}
+    tweet_data = {"tweet_data": "Author's tweet!", "tweet_media_ids": []}
+    response = await client.post("/api/tweets", json=tweet_data, headers=headers_author)
+    tweet_id = response.json()["tweet_id"]
+
+    # 4. Получаем ленту текущего пользователя (твит автора должен быть там)
+    feed_response = await client.get("/api/tweets", headers=headers_test)
+    assert feed_response.status_code == 200
+
+    # 5. Проверяем кэш текущей ленты
+    cache_key = f"feed:{test_user_id}"
+    cached_data = await redis_client.get(cache_key)
+    assert cached_data is not None
+
+    # 6. Лайкаем твит автора
+    like_response = await client.post(
+        f"/api/tweets/{tweet_id}/likes", headers=headers_test
+    )
+    assert like_response.status_code == 200
+    assert like_response.json()["result"] is True
+
+    # 7. Кэш лайкера должен быть инвалидирован
+    cached_after_like = await redis_client.get(cache_key)
+    assert cached_after_like is None, "Liker's feed cache should be invalidated"
+
+
+@pytest.mark.asyncio
+async def test_unlike_invalidates_feed_cache(
+    client: AsyncClient, db_session: AsyncSession, redis_client: "redis.Redis[str]"
+) -> None:
+    """
+    Тест: Проверка, что анлайк твита инвалидирует кэш ленты.
+    """
+    # Получаем реальный ID тестового пользователя
+    result = await db_session.execute(
+        select(User).where(User.api_key_hash == User.hash_api_key("test"))
+    )
+    test_user = result.scalar_one()
+    user_id = test_user.id
+
+    headers = {"api-key": "test"}
+
+    # 1. Создаем твит
+    tweet_data = {"tweet_data": "Unlike cache test!", "tweet_media_ids": []}
+    response = await client.post("/api/tweets", json=tweet_data, headers=headers)
+    tweet_id = response.json()["tweet_id"]
+
+    # 2. Лайкаем
+    await client.post(f"/api/tweets/{tweet_id}/likes", headers=headers)
+
+    # 3. Получаем ленту, чтобы кэш записался
+    feed_response = await client.get("/api/tweets", headers=headers)
+    assert feed_response.status_code == 200
+
+    # 4. Проверяем, что кэш записался
+    cache_key = f"feed:{user_id}"
+    cached_data = await redis_client.get(cache_key)
+    assert cached_data is not None
+
+    # 5. Анлайкаем твит
+    unlike_response = await client.delete(
+        f"/api/tweets/{tweet_id}/likes", headers=headers
+    )
+    assert unlike_response.status_code == 200
+    assert unlike_response.json()["result"] is True
+
+    # 6. Проверяем, что кэш инвалидирован
+    cached_after_unlike = await redis_client.get(cache_key)
+    assert cached_after_unlike is None, "Cache should be invalidated after unlike"
+
+    # 7. Проверяем, что лента теперь без лайка
+    feed_response2 = await client.get("/api/tweets", headers=headers)
+    tweets = feed_response2.json()["tweets"]
+    unliked_tweet = next((t for t in tweets if t["id"] == tweet_id), None)
+    assert unliked_tweet is not None
+    # После анлайка лайков быть не должно
+    like_names = [like["name"] for like in unliked_tweet["likes"]]
+    assert test_user.name not in like_names

@@ -24,8 +24,10 @@ FROM python:3.13-slim as runtime
 
 WORKDIR /app
 
+# === Установка bash для запуска скриптов ===
+RUN apt-get update && apt-get install -y --no-install-recommends bash && rm -rf /var/lib/apt/lists/*
+
 # === БЕЗОПАСНОСТЬ: Создаем пользователя ===
-# Это лучшая практика (Non-root container)
 RUN adduser --disabled-password --gecos '' appuser
 
 # Копируем Python и зависимости
@@ -35,13 +37,12 @@ COPY --from=builder /usr/local /usr/local
 COPY --from=builder /app .
 
 # === ПРАВА ДОСТУПА (FIX PERMISSIONS) ===
-# 1. Создаем папку медиа
 RUN mkdir -p /app/media
-# 2. Даем права пользователю appuser (UID 1000) на всю папку приложения
 RUN chown -R appuser:appuser /app
 
-# Копируем скрипт запуска
+# Копируем скрипт запуска и исправляем CRLF -> LF
 COPY start.sh .
+RUN sed -i 's/\r$//' start.sh
 RUN chmod +x start.sh
 
 # Переключаемся на пользователя

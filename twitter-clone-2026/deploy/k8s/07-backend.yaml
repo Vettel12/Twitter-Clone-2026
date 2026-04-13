@@ -70,23 +70,6 @@ spec:
             periodSeconds: 5
           securityContext:
             allowPrivilegeEscalation: false
-          volumeMounts:
-            - name: media-storage
-              mountPath: /app/media
-            - name: seed-script
-              mountPath: /app/scripts/seed_db.py
-              subPath: seed_db.py
-      volumes:
-        - name: media-storage
-          persistentVolumeClaim:
-            claimName: media-pvc
-        - name: seed-script
-          configMap:
-            name: seed-script
-            items:
-              - key: seed_db.py
-                path: seed_db.py
-                mode: 0755
 ---
 apiVersion: v1
 kind: Service

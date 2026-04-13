@@ -1,39 +1,27 @@
-import logging
-from typing import Annotated, Any, Optional
+"""
+Маршруты API для управления пользователями.
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+Эндпоинты:
+    - GET  /api/users/me           — профиль текущего пользователя
+    - GET  /api/users/{user_id}     — профиль пользователя по ID
+    - POST /api/users/{user_id}/follow    — подписка
+    - DELETE /api/users/{user_id}/follow  — отписка
+"""
+
+from typing import Annotated, Any
+
+import structlog
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from libs.auth import get_current_user
 from libs.database import get_db
 from services.users.app import crud, schemas
 from services.users.app.models import User
 
-# Настройка логирования
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
-
-
-# --- Зависимость для авторизации ---
-async def get_current_user(
-    db: Annotated[AsyncSession, Depends(get_db)],
-    api_key: Annotated[Optional[str], Header(alias="api-key")] = None,
-) -> User:
-    if not api_key:
-        logger.warning("Authentication failed: Missing API Key")
-        raise HTTPException(status_code=401, detail="Missing API Key")
-
-    user = await crud.get_user_by_api_key(db, api_key)
-    if not user:
-        # ✅ FIXED: Не логируем API key (даже первые 4 символа)
-        logger.warning("Authentication failed: Invalid API Key")
-        raise HTTPException(status_code=401, detail="Invalid API Key")
-
-    logger.info(f"User authenticated: id={user.id}, name={user.name}")
-    return user
-
-
-# --- Эндпоинты ---
 
 
 @router.get("/api/users/me", response_model=schemas.UserOut)
@@ -41,32 +29,41 @@ async def get_me(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> schemas.UserOut:
-    logger.info(f"User {user.id} requested their profile")
+    """
+    Получить профиль текущего авторизованного пользователя.
+
+    Загружает полный профиль с подписчиками и подписками.
+    """
+    logger.info("user_get_me", user_id=user.id)
 
     full_user = await crud.get_user_by_id(db, user.id)
     user_response = schemas.UserResponse.model_validate(full_user)
 
-    logger.debug(f"User {user.id} profile data prepared")
     return schemas.UserOut(user=user_response)
 
 
 @router.get("/api/users/{user_id}")
 async def get_user_profile(
-    user_id: int, db: Annotated[AsyncSession, Depends(get_db)]
+    user_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Any:
-    logger.info(f"Request for user profile id={user_id}")
+    """
+    Получить публичный профиль пользователя по идентификатору.
+
+    Возвращает стандартную структуру ответа с полем ``result``.
+    """
+    logger.info("user_get_profile_requested", user_id=user_id)
 
     user = await crud.get_user_by_id(db, user_id)
     if not user:
-        logger.warning(f"User profile id={user_id} not found")
+        logger.warning("user_profile_not_found", user_id=user_id)
         return {
             "result": False,
             "error_type": "NotFoundError",
-            "error_message": "User not found",
+            "error_message": "Пользователь не найден",
         }
 
     user_response = schemas.UserResponse.model_validate(user)
-    logger.info(f"User profile id={user_id} found: {user.name}")
     return schemas.UserOut(user=user_response)
 
 
@@ -76,21 +73,30 @@ async def follow_user(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Any:
-    logger.info(f"User {current_user.id} attempting to follow {user_id}")
+    """
+    Подписаться на другого пользователя.
+
+    Проверяет:
+        - Нельзя подписаться на себя.
+        - Нельзя подписаться повторно.
+    """
+    logger.info("follow_attempt", follower_id=current_user.id, followed_id=user_id)
 
     success = await crud.follow_user(db, current_user.id, user_id)
 
     if not success:
         logger.warning(
-            f"Follow failed: User {current_user.id} -> {user_id} (already following or self)"
+            "follow_failed",
+            follower_id=current_user.id,
+            followed_id=user_id,
         )
         return {
             "result": False,
             "error_type": "ActionError",
-            "error_message": "Cannot follow user (already following or self-follow)",
+            "error_message": "Не удалось подписаться (уже подписаны или попытка подписки на себя)",
         }
 
-    logger.info(f"User {current_user.id} successfully followed {user_id}")
+    logger.info("follow_success", follower_id=current_user.id, followed_id=user_id)
     return {"result": True}
 
 
@@ -100,19 +106,26 @@ async def unfollow_user(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Any:
-    logger.info(f"User {current_user.id} attempting to unfollow {user_id}")
+    """
+    Отписаться от другого пользователя.
+
+    Возвращает ошибку, если текущий пользователь не был подписан.
+    """
+    logger.info("unfollow_attempt", follower_id=current_user.id, followed_id=user_id)
 
     success = await crud.unfollow_user(db, current_user.id, user_id)
 
     if not success:
         logger.warning(
-            f"Unfollow failed: User {current_user.id} -> {user_id} (not following)"
+            "unfollow_not_found",
+            follower_id=current_user.id,
+            followed_id=user_id,
         )
         return {
             "result": False,
             "error_type": "ActionError",
-            "error_message": "Not following this user",
+            "error_message": "Вы не были подписаны на этого пользователя",
         }
 
-    logger.info(f"User {current_user.id} successfully unfollowed {user_id}")
+    logger.info("unfollow_success", follower_id=current_user.id, followed_id=user_id)
     return {"result": True}

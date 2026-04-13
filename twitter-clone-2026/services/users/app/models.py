@@ -46,10 +46,12 @@ class User(Base):
     )
 
     # Связь с твитами пользователя
-    tweets: Mapped[List["Tweet"]] = relationship(back_populates="author")
+    tweets: Mapped[List["Tweet"]] = relationship(
+        back_populates="author", cascade="all, delete-orphan"
+    )
 
     # Связь с лайками пользователя
-    likes: Mapped[List["Like"]] = relationship(back_populates="user")
+    likes: Mapped[List["Like"]] = relationship(back_populates="user", cascade="delete")
 
     # ============================================================
     # STATIC METHODS FOR SECURE API KEY HANDLING

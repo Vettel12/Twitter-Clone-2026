@@ -6,7 +6,6 @@ from faststream.kafka import KafkaBroker
 KAFKA_SERVER = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 
 # Создаем экземпляр брокера
-# Он будет общаться с Kafka
 broker = KafkaBroker(KAFKA_SERVER)
 
 # Имена топиков
