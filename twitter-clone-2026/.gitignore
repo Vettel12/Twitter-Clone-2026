@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment Files (НИКОГДА не коммитьте секреты!)
+.env
+.env.prod
+.env.local
+*.env.bak
+
+# Media files (uploaded by users)
+media/uploads/*
+!media/uploads/.gitkeep
+
+# Database
+*.db
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
+
+# Pytest
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Docker
+docker-compose.override.yml
+
+# Generated Kubernetes Secrets (используйте 02-secrets.example.yaml как шаблон)
+deploy/k8s/02-secrets.yaml

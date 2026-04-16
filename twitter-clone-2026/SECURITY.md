@@ -15,7 +15,8 @@
 | **API-ключи** | ✅ Хешируются | SHA-256 (см. недостатки ниже) |
 | **Секреты** | ⚠️ Требует внимания | `.env` в `.gitignore`, но `.env` уже в истории коммитов |
 | **HTTPS/TLS** | 🔴 Не настроено | Ingress без TLS |
-| **Rate Limiting** | 🔴 Отсутствует | Нет защиты от brute-force |
+| **Rate Limiting** | 🟢 Nginx | Можно реализовать через Nginx Ingress (`limit-rps`) или SlowAPI |
+| **PostgreSQL** | ✅ Обычный пользователь | Пользователь `skillbox` без SUPERUSER прав (безопасно) |
 | **Kubernetes Secrets** | ⚠️ Base64 ≠ шифрование | `02-secrets.yaml` содержит реальные значения |
 
 ---
@@ -121,13 +122,17 @@ KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT"
 
 События (создание твитов) передаются без шифрования.
 
-### 7. PostgreSQL SUPERUSER 🟡 MEDIUM
+### 7. Rate Limiting — можно реализовать в Nginx 🟢 LOW
 
-Приложение подключается как `skillbox` — предположительно суперпользователь. SQL-инъекция (маловероятно) дала бы полный контроль.
+Rate Limiting можно настроить на уровне Nginx (Ingress Controller) в Kubernetes:
+```yaml
+# В Ingress аннотациях
+nginx.ingress.kubernetes.io/limit-rps: "10"
+```
 
-### 8. Swagger UI публичный 🟢 LOW
+Для Docker Compose — добавить Nginx reverse proxy с `limit_req_zone`.
 
-`/api/docs` и `/api/redoc` доступны без ограничений. В production рекомендуется отключать.
+**Рекомендация:** Реализовать на уровне Nginx для простоты, либо `slowapi` для granular контроля.
 
 ---
 
@@ -137,8 +142,7 @@ KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT"
 |-----------|----------|-----------|
 | 1 | Ротация всех секретов + очистка git-истории | Средняя |
 | 2 | Добавить TLS в Ingress | Низкая |
-| 3 | Rate Limiting (slowapi) | Низкая |
-| 4 | PBKDF2 для API-ключей | Средняя |
-| 5 | Redis `--requirepass` | Низкая |
-| 6 | Отдельный пользователь БД | Низкая |
-| 7 | Kafka SASL_SSL | Высокая |
+| 3 | PBKDF2 для API-ключей | Средняя |
+| 4 | Redis `--requirepass` | Низкая |
+| 5 | Rate Limiting через Nginx/SlowAPI | Низкая |
+| 6 | Kafka SASL_SSL | Высокая |

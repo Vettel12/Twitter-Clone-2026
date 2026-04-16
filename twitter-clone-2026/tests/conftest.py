@@ -1,6 +1,8 @@
 import asyncio
 import os
+import shutil
 import sys
+import tempfile
 from typing import Any, AsyncGenerator, Generator
 from unittest.mock import AsyncMock, patch
 
@@ -10,6 +12,10 @@ os.environ["POSTGRES_HOST"] = "localhost"
 os.environ["POSTGRES_PORT"] = "5433"  # Порт, который мы пробросили в docker-compose
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
 os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:9092"
+
+# === MEDIA DIR: Создаём временную папку для тестов ===
+TEST_MEDIA_DIR = tempfile.mkdtemp(prefix="twitter_test_media_")
+os.environ["MEDIA_DIR"] = TEST_MEDIA_DIR
 # ==============================================================
 
 import pytest
@@ -99,6 +105,10 @@ def setup_test_database() -> Generator[None, None, None]:
 
     # --- RUN TEARDOWN ---
     asyncio.run(_drop_db())
+
+    # Очищаем временную папку media
+    if os.path.exists(TEST_MEDIA_DIR):
+        shutil.rmtree(TEST_MEDIA_DIR, ignore_errors=True)
 
 
 # --- 2. DB SESSION (Per Test) ---

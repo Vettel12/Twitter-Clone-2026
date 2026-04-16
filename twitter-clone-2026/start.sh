@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Исправляем права на медиа-папку для nginx/www-data
-chmod -R 755 /app/media
+# Исправляем права на медиа-папку (может не работать с bind mount от root)
+chmod -R 755 /app/media 2>/dev/null || true
 chmod -R 644 /app/media/* 2>/dev/null || true
 
 # Запускаем Feed Service (Kafka Consumer) в фоне (&)

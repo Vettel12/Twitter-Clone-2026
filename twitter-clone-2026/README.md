@@ -61,6 +61,106 @@
 
 ---
 
+## 🏛️ Общая Архитектура (Mermaid)
+
+```mermaid
+graph TB
+    Client["👤 Клиент<br/>Browser / Mobile / Postman"]
+    Nginx["🌐 Nginx / Ingress<br/>Reverse Proxy"]
+    Backend["⚙️ Backend API<br/>FastAPI :8000"]
+    PostgreSQL["🐘 PostgreSQL<br/>:5432"]
+    Redis["🔴 Redis<br/>:6379"]
+    Kafka["📨 Kafka<br/>:29092"]
+    Prometheus["📊 Prometheus<br/>:9090"]
+    Grafana["📈 Grafana<br/>:3000"]
+
+    Client -->|HTTP GET/POST| Nginx
+    Nginx -->|/api/* прокси| Backend
+    Nginx -->|/ статика| Frontend["🖥️ Frontend<br/>Vue.js / Nginx :80"]
+    
+    Backend -->|Чтение/Запись| PostgreSQL
+    Backend -->|Кеширование| Redis
+    Backend -->|Публикация событий| Kafka
+    Backend -->|/metrics| Prometheus
+    
+    Prometheus -->|Scrapes| Backend
+    Prometheus -->|Scrapes| PostgreSQL
+    Grafana -->|Запросы| Prometheus
+    
+    style Client fill:#e1f5fe
+    style Backend fill:#fff3e0
+    style PostgreSQL fill:#e8f5e9
+    style Redis fill:#ffebee
+    style Kafka fill:#f3e5f5
+    style Nginx fill:#e0f2f1
+    style Prometheus fill:#fce4ec
+    style Grafana fill:#fff8e1
+```
+
+### 🔀 Потоки данных
+
+```mermaid
+sequenceDiagram
+    participant C as Клиент
+    participant B as Backend API
+    participant DB as PostgreSQL
+    participant R as Redis
+    participant K as Kafka
+    
+    C->>B: POST /api/tweets<br/>(создать твит)
+    B->>DB: INSERT INTO tweets<br/>(сохранение)
+    B->>R: SET feed:{follower_id}<br/>(обновить кеш)
+    B->>K: PUBLISH tweet_created<br/>(событие)
+    B-->>C: 201 Created<br/>(JSON ответ)
+    
+    C->>B: GET /api/tweets/{id}
+    B->>R: GET feed:{id}<br/>(проверка кеша)
+    alt Кеш есть
+        R-->>B: Данные из кеша
+    else Кеш отсутствует
+        B->>DB: SELECT * FROM tweets
+        DB-->>B: Данные из БД
+        B->>R: SET cache<br/>(сохранить в кеш)
+    end
+    B-->>C: 200 OK<br/>(JSON)
+```
+
+### 🗺️ Варианты Развертывания
+
+```mermaid
+graph LR
+    subgraph "1️⃣ Локально (Docker Compose)"
+        DC[Docker Compose<br/>docker-compose.yml]
+        DC -.->|Запускает| DB1[(PostgreSQL)]
+        DC -.->|Запускает| R1[Redis]
+        DC -.->|Запускает| K1[Kafka+ZK]
+        DC -.->|Запускает| A1[FastAPI]
+    end
+    
+    subgraph "2️⃣ Production (Kubernetes)"
+        K8s[K8s Manifests]
+        K8s -.->|Оркестрация| Pods[Backend Pods x2+]
+        K8s -.->|Storage| PVC[PVC Storage]
+        Pods -.->|Использует| DB2[(PostgreSQL)]
+        Pods -.->|Использует| R2[Redis]
+        Pods -.->|Использует| K2[Kafka KRaft]
+    end
+    
+    subgraph "3️⃣ CI/CD (GitLab)"
+        CI[.gitlab-ci.yml]
+        CI -.->|Lint| Ruff[Ruff + MyPy]
+        CI -.->|Test| Pytest[Pytest + Coverage]
+        Pytest -.->|Требует| TestDB[(Test PostgreSQL)]
+        Pytest -.->|Требует| TestR[Test Redis]
+    end
+    
+    style DC fill:#e3f2fd
+    style K8s fill:#e8f5e9
+    style CI fill:#fff3e0
+```
+
+---
+
 ## 🗄 Схема Базы Данных
 
 ### ER-диаграмма PostgreSQL
@@ -788,12 +888,7 @@ kubectl get pods -n twitter-clone
 
 ### Шаг 4: Инициализация БД
 ```bash
-# Создание суперпользователя для Alembic
-kubectl exec -it deploy/postgres -n twitter-clone -- \
-  psql -U skillbox -d twitter_clone_db \
-  -c "CREATE USER postgres WITH SUPERUSER PASSWORD 'skillbox_password';"
-
-# Запуск миграций
+# Запуск миграций (обычный пользователь skillbox имеет достаточно прав)
 kubectl exec -it deploy/backend -n twitter-clone -- alembic upgrade head
 
 # Заполнение тестовыми данными
@@ -1517,10 +1612,9 @@ kubectl logs deploy/backend -n twitter-clone
 # Проверка статуса Postgres
 kubectl get pods -n twitter-clone | grep postgres
 
-# Создание пользователя postgres
-kubectl exec -it deploy/postgres -n twitter-clone -- \
-  psql -U skillbox -d twitter_clone_db \
-  -c "CREATE USER postgres WITH SUPERUSER PASSWORD 'skillbox_password';"
+# Проверка подключения из Backend
+kubectl exec -it deploy/backend -n twitter-clone -- \
+  python -c "from libs.db import engine; print('DB OK')"
 ```
 
 ### 2. Frontend возвращает `502 Bad Gateway`
@@ -1954,6 +2048,305 @@ locust -f locustfile.py --host=http://localhost:8000
 | [SECURITY.md](SECURITY.md) | Полный аудит безопасности |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Схемы и принципы работы |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Проблемы и решения |
+
+---
+
+## 🚀 Полное руководство по вариантам развёртывания
+
+Проект поддерживает **три основных варианта развёртывания**, каждый из которых подходит для разных сценариев использования.
+
+### 📊 Сравнительная таблица
+
+| Характеристика | Вариант 1: Docker Compose | Вариант 2: docker-compose.prod.yml | Вариант 3: Kubernetes |
+|----------------|--------------------------|-----------------------------------|----------------------|
+| **Назначение** | Локальная разработка и отладка | Production на одном сервере | Production в кластере |
+| **Сложность** | 🟢 Низкая | 🟢 Низкая | 🟡 Средняя/Высокая |
+| **Kafka** | Zookeeper + Confluent | Zookeeper + Confluent | KRaft (без Zookeeper) |
+| **Redis** | ✅ Включен | ✅ Включен | ✅ Включен |
+| **Kafdrop** | ✅ Port 9000 | ❌ Не нужен | ❌ Не нужен |
+| **Проброс портов** | Все сервисы | Только Backend (8000) | Через Ingress |
+| **Health Checks** | ❌ Нет | ✅ Docker healthcheck | ✅ K8s Probes |
+| **Auto-restart** | `restart: always` | `restart: always` | K8s RestartPolicy |
+| **Масштабирование** | ❌ Ручное | ❌ Ручное | ✅ HPA (2–10 реплик) |
+| **Frontend** | ❌ Нет | ❌ Нет | ✅ Vue.js через Nginx |
+| **Monitoring** | ❌ Нет | ❌ Нет | ✅ Prometheus + Grafana |
+
+---
+
+### Вариант 1: Локальное развёртывание (Docker Compose)
+
+**Файл:** `deploy/docker-compose.yml`
+
+**Когда использовать:**
+- Локальная разработка и отладка
+- Тестирование новых функций
+- Изучение архитектуры проекта
+- Демонстрация возможностей
+
+**Быстрый старт:**
+```bash
+# 1. Скопируйте и настройте .env
+cp .env.example .env
+# Отредактируйте .env при необходимости
+
+# 2. Запустите все сервисы
+docker compose -f deploy/docker-compose.yml up -d
+
+# 3. Примените миграции БД
+docker compose -f deploy/docker-compose.yml exec app alembic upgrade head
+
+# 4. Заполните тестовыми данными (опционально)
+docker compose -f deploy/docker-compose.yml exec app python scripts/seed_db.py
+
+# 5. Проверьте работоспособность
+curl http://localhost:8000/api/healthcheck
+```
+
+**Доступные сервисы:**
+| Сервис | URL | Назначение |
+|--------|-----|------------|
+| Backend API | http://localhost:8000 | FastAPI приложение |
+| Swagger UI | http://localhost:8000/api/docs | Документация API |
+| ReDoc | http://localhost:8000/api/redoc | Альтернативная документация |
+| PostgreSQL | localhost:5433 | База данных (проброс порта) |
+| Redis | localhost:6379 | Кеширование (проброс порта) |
+| Kafka | localhost:9092 | Очередь сообщений (проброс порта) |
+| Kafdrop | http://localhost:9000 | Web UI для Kafka |
+
+**Полезные команды:**
+```bash
+# Просмотр логов
+docker compose -f deploy/docker-compose.yml logs -f app
+
+# Проверка состояния сервисов
+docker compose -f deploy/docker-compose.yml ps
+
+# Остановка (данные сохраняются в volumes)
+docker compose -f deploy/docker-compose.yml down
+
+# Полная очистка (данные удаляются!)
+docker compose -f deploy/docker-compose.yml down -v
+```
+
+---
+
+### Вариант 2: Production на одном сервере (docker-compose.prod.yml)
+
+**Файл:** `deploy/docker-compose.prod.yml`
+
+**Когда использовать:**
+- Развёртывание на VPS/выделенном сервере
+- Небольшой production без Kubernetes
+- Staging окружение для тестирования production конфигурации
+- Демо-сервер для клиентов
+
+**Отличия от локального варианта:**
+- ✅ Добавлен **Redis** (обязателен для работы приложения)
+- ❌ Убран **Kafdrop** (не нужен в production)
+- ❌ Нет проброса портов для инфраструктуры (безопасность)
+- ✅ Добавлены **Docker healthchecks** для всех сервисов
+- ✅ Используются **volumes** для persistent данных
+- ✅ Конфигурация из `.env.prod` (создайте из `.env.prod.example`)
+
+**Быстрый старт:**
+```bash
+# 1. Создайте production конфигурацию
+cp .env.prod.example .env.prod
+# ОБЯЗАТЕЛЬНО замените все значения на безопасные!
+# Особенно: POSTGRES_PASSWORD, SECRET_KEY, ALLOWED_ORIGINS
+
+# 2. Запустите все сервисы
+docker compose -f deploy/docker-compose.prod.yml up -d
+
+# 3. Дождитесь готовности (health checks выполнятся)
+docker compose -f deploy/docker-compose.prod.yml ps
+
+# 4. Примените миграции БД
+docker compose -f deploy/docker-compose.prod.yml exec app alembic upgrade head
+
+# 5. Проверьте работоспособность
+curl http://localhost:8000/api/healthcheck
+```
+
+**Рекомендации по безопасности:**
+```bash
+# 1. Настройте фаервол (UFW пример)
+ufw allow 80/tcp    # HTTP
+ufw allow 443/tcp   # HTTPS
+ufw enable
+
+# 2. Добавьте Nginx reverse proxy для HTTPS (certbot + Let's Encrypt)
+# 3. Не пробрасывайте порты БД наружу (только через Nginx прокси)
+# 4. Настройте rate limiting в Nginx:
+#    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+```
+
+**Мониторинг без Prometheus:**
+```bash
+# Проверка состояния через Docker
+docker compose -f deploy/docker-compose.prod.yml ps
+
+# Просмотр логов
+docker compose -f deploy/docker-compose.prod.yml logs -f --tail=100 app
+
+# Проверка здоровья API
+curl -f http://localhost:8000/api/healthcheck || echo "API недоступен!"
+```
+
+---
+
+### Вариант 3: Production в Kubernetes
+
+**Файлы:** `deploy/k8s/*.yaml`
+
+**Когда использовать:**
+- Production с высокой доступностью
+- Автоматическое масштабирование (HPA)
+- Rolling updates без даунтайма
+- Полный мониторинг (Prometheus + Grafana)
+
+**Отличия от Docker Compose:**
+| Аспект | Docker Compose | Kubernetes |
+|--------|---------------|------------|
+| Kafka | Zookeeper + Confluent | KRaft mode (без Zookeeper) |
+| Backend | 1 контейнер | 2+ реплики с HPA |
+| Health | Docker healthcheck | K8s liveness/readiness probes |
+| Storage | Docker volumes | PersistentVolumeClaims |
+| Network | Docker network | ClusterIP Services + Ingress |
+| Config | .env файл | ConfigMap + Secrets |
+
+**Быстрый старт:**
+```bash
+# 1. Убедитесь что кластер запущен (minikube/kind/GKE/EKS)
+kubectl cluster-info
+
+# 2. Создайте namespace
+kubectl apply -f deploy/k8s/00-namespace.yaml
+
+# 3. Настройте Secrets (создайте 02-secrets.yaml из примера)
+cp deploy/k8s/02-secrets.example.yaml deploy/k8s/02-secrets.yaml
+# Замените значения на реальные (в base64)
+# POSTGRES_USER: echo -n "your_user" | base64
+# POSTGRES_PASSWORD: echo -n "your_password" | base64
+# SECRET_KEY: echo -n "your_secret" | base64
+kubectl apply -f deploy/k8s/02-secrets.yaml
+
+# 4. Примените ConfigMap
+kubectl apply -f deploy/k8s/01-configmap.yaml
+
+# 5. Запустите инфраструктуру
+kubectl apply -f deploy/k8s/03-postgres.yaml
+kubectl apply -f deploy/k8s/04-redis.yaml
+kubectl apply -f deploy/k8s/05-kafka.yaml
+
+# 6. Дождитесь готовности инфраструктуры
+kubectl wait --for=condition=Ready pod -l app=postgres -n twitter-clone --timeout=120s
+kubectl wait --for=condition=Ready pod -l app=redis -n twitter-clone --timeout=60s
+kubectl wait --for=condition=Ready pod -l app=kafka -n twitter-clone --timeout=120s
+
+# 7. Запустите Backend (миграции выполнятся автоматически в initContainer)
+kubectl apply -f deploy/k8s/07-backend.yaml
+
+# 8. Проверьте работоспособность
+kubectl logs deploy/backend -n twitter-clone --tail=20
+curl http://localhost:8000/api/healthcheck  # через port-forward
+```
+
+**Port-forward для тестирования:**
+```bash
+# Проброс порта Backend
+kubectl port-forward svc/backend-service 8000:8000 -n twitter-clone &
+
+# Проброс порта Grafana
+kubectl port-forward svc/prometheus-grafana 3000:80 -n twitter-clone &
+
+# Проброс порта Prometheus
+kubectl port-forward svc/prometheus-server 9090:80 -n twitter-clone &
+```
+
+**Frontend (опционально):**
+```bash
+# 9. Запустите Frontend
+kubectl apply -f deploy/k8s/09-frontend.yaml
+kubectl apply -f deploy/k8s/10-media-pvc.yaml
+kubectl apply -f deploy/k8s/11-ingress.yaml
+
+# 10. Добавьте домен в /etc/hosts (если используете Ingress)
+echo "127.0.0.1 twitter-clone.local" | sudo tee -a /etc/hosts
+
+# 11. Откройте в браузере
+# http://twitter-clone.local         — Frontend Vue.js
+# http://twitter-clone.local/api/docs — Swagger UI
+```
+
+---
+
+### 🔧 CI/CD: GitLab CI
+
+**Файл:** `.gitlab-ci.yml`
+
+**Когда запускается:**
+- При каждом push в репозиторий
+- При создании Merge Request
+
+**Pipeline состоит из:**
+```
+push/MR → [lint: ruff + mypy] → [test: pytest + PostgreSQL + Redis]
+```
+
+**Требования:**
+- GitLab Runner с Docker executor
+- Docker-in-Docker (dind) для запуска сервисов
+
+**Что происходит:**
+1. **Stage: lint** — Проверка кода (ruff check, ruff format, mypy)
+2. **Stage: test** — Запуск тестов с PostgreSQL и Redis:
+   - Создаются сервисы PostgreSQL и Redis
+   - Создается `.env` файл из переменных
+   - Применяются миграции Alembic
+   - Запускается pytest с покрытием
+
+**Как посмотреть результаты:**
+- В GitLab: CI/CD → Pipelines → клик на pipeline → Jobs
+- Локально: можно запустить `pytest -v` после настройки окружения
+
+---
+
+### 📋 Чек-лист развёртывания с нуля
+
+```markdown
+## Подготовка
+- [ ] Git clone репозитория
+- [ ] Python 3.13+ установлен
+- [ ] Docker + Docker Compose установлены
+- [ ] (K8s) kubectl установлен и подключен к кластеру
+
+## Локальное развертывание (Docker Compose)
+- [ ] cp .env.example .env
+- [ ] docker compose -f deploy/docker-compose.yml up -d
+- [ ] docker compose exec app alembic upgrade head
+- [ ] curl http://localhost:8000/api/healthcheck → {"status": "ok"}
+
+## Production (docker-compose.prod.yml)
+- [ ] cp .env.prod.example .env.prod
+- [ ] Заменить POSTGRES_PASSWORD, SECRET_KEY, ALLOWED_ORIGINS
+- [ ] docker compose -f deploy/docker-compose.prod.yml up -d
+- [ ] docker compose exec app alembic upgrade head
+- [ ] curl http://localhost:8000/api/healthcheck → {"status": "ok"}
+- [ ] Настроить Nginx + HTTPS (certbot)
+
+## Production (Kubernetes)
+- [ ] Создать 02-secrets.yaml из 02-secrets.example.yaml
+- [ ] Применить манифесты по порядку (00 → 11)
+- [ ] Дождаться готовности всех Pods
+- [ ] kubectl port-forward svc/backend-service 8000:8000
+- [ ] curl http://localhost:8000/api/healthcheck → {"status": "ok"}
+
+## CI/CD (GitLab)
+- [ ] Настроить GitLab Runner с Docker executor
+- [ ] Push в репозиторий → Pipeline запускается автоматически
+- [ ] Проверить результаты в GitLab CI/CD → Pipelines
+```
 
 ---
 

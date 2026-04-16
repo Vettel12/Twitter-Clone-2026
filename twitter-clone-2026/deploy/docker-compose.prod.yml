@@ -1,54 +1,154 @@
+# ==============================================================================
+# Docker Compose — PRODUCTION конфигурация
+# ==============================================================================
+# Этот файл используется для production-подобного развертывания на одном сервере.
+# Отличия от docker-compose.yml (локального):
+# • Нет Kafdrop (Web UI для Kafka) — не нужен в production
+# • Нет проброса портов для инфраструктурных сервисов (Redis, Kafka, Zookeeper)
+# • Все сервисы используют .env.prod (создайте из .env.prod.example)
+# • Добавлен Redis (обязателен для работы приложения)
+# • Используются restart policies для автоматического восстановления
+#
+# Использование:
+#   docker compose -f deploy/docker-compose.prod.yml up -d
+# ==============================================================================
 version: '3.8'
 
 services:
+  # ============================================================================
+  # Backend API (FastAPI)
+  # ============================================================================
   app:
-    build: 
+    build:
       context: ..
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
-    environment:
-      - POSTGRES_HOST=postgres
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - "8000:8000"  # В production можно ограничить доступ через Nginx
+    env_file:
+      - ../.env.prod  # Production конфигурация
     depends_on:
-      - postgres
-      - kafka
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    restart: always
     networks:
       - prod-network
-    restart: always
+    volumes:
+      - ../media:/app/media  # Persistent storage для загруженных файлов
+    # Health check для автоматического восстановления
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
+  # ============================================================================
+  # PostgreSQL — Основная база данных
+  # ============================================================================
   postgres:
     image: postgres:16-alpine
     env_file:
       - ../.env.prod
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data  # Persistent storage
     networks:
       - prod-network
     restart: always
+    # Health check для проверки готовности БД
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
+  # ============================================================================
+  # Redis — Кеширование и сессии
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --appendonly yes
+      --save 60 1
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data  # Persistent storage для AOF
+    networks:
+      - prod-network
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ============================================================================
+  # Zookeeper — Координация Kafka (в production лучше использовать KRaft)
+  # ============================================================================
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
     networks:
       - prod-network
     restart: always
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
+  # ============================================================================
+  # Kafka — Очередь сообщений для асинхронных событий
+  # ============================================================================
   kafka:
     image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      zookeeper:
+        condition: service_healthy
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Слушатели: только внутренний (нет внешнего доступа)
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      # Репликация для одного узла
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     networks:
       - prod-network
     restart: always
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "29092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 networks:
   prod-network:
+    driver: bridge
 
 volumes:
-  postgres_data:
+  postgres_data:  # Данные PostgreSQL
+  redis_data:     # Данные Redis (AOF persistence)
+  zookeeper_data: # Данные Zookeeper
+  kafka_data:     # Данные Kafka

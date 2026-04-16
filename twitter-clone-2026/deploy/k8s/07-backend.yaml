@@ -22,6 +22,10 @@ spec:
       securityContext:
         runAsUser: 1000
         fsGroup: 1000
+      volumes:
+        - name: media-volume
+          persistentVolumeClaim:
+            claimName: media-pvc
       initContainers:
         - name: wait-for-infrastructure
           image: busybox:1.36
@@ -57,17 +61,29 @@ spec:
           envFrom:
             - configMapRef: { name: app-config }
             - secretRef: { name: db-credentials }
+          env:
+            - name: MEDIA_DIR
+              value: /app/media
+          volumeMounts:
+            - name: media-volume
+              mountPath: /app/media
           resources:
             requests: { memory: "256Mi", cpu: "250m" }
             limits: { memory: "512Mi", cpu: "500m" }
           livenessProbe:
-            httpGet: { path: /, port: 8000 }
+            # Проверка жизнеспособности — используем /api/healthcheck (правильный endpoint для API)
+            httpGet: { path: /api/healthcheck, port: 8000 }
             initialDelaySeconds: 15
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
-            httpGet: { path: /, port: 8000 }
+            # Проверка готовности — /api/healthcheck проверяет подключение к БД
+            httpGet: { path: /api/healthcheck, port: 8000 }
             initialDelaySeconds: 5
             periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
           securityContext:
             allowPrivilegeEscalation: false
 ---

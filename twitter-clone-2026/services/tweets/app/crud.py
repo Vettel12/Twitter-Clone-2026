@@ -117,16 +117,20 @@ async def save_media(db: AsyncSession, file: UploadFile) -> int:
         raise ValueError("Недопустимый файл изображения (проверка магических байтов)")
 
     # --- Сохранение на диск ---
-    media_dir = Path("media")
-    media_dir.mkdir(exist_ok=True, mode=0o755)
+    # Используем переменную окружения MEDIA_DIR для гибкости (Docker, K8s, тесты)
+    media_base = Path(os.environ.get("MEDIA_DIR", "/app/media"))
+    media_base.mkdir(parents=True, exist_ok=True, mode=0o777)
     unique_filename = f"{uuid.uuid4()}{ext}"
-    file_path = media_dir / unique_filename
+    file_path = media_base / unique_filename
 
     async with aiofiles.open(file_path, "wb") as out_file:
         await out_file.write(content)
 
-    # Права на чтение для всех
-    os.chmod(file_path, 0o644)
+    # Права на чтение для всех (может не работать с bind mount, игнорируем ошибку)
+    try:
+        os.chmod(file_path, 0o644)
+    except OSError:
+        pass
 
     # --- Запись метаданных в базу ---
     db_media = Media(file_path=str(file_path))

@@ -37,16 +37,18 @@ COPY --from=builder /usr/local /usr/local
 COPY --from=builder /app .
 
 # === ПРАВА ДОСТУПА (FIX PERMISSIONS) ===
-RUN mkdir -p /app/media
+RUN mkdir -p /app/media && chmod 777 /app/media
 RUN chown -R appuser:appuser /app
 
-# Копируем скрипт запуска и исправляем CRLF -> LF
+# Копируем скрипты и исправляем CRLF -> LF
+COPY entrypoint.sh .
 COPY start.sh .
-RUN sed -i 's/\r$//' start.sh
-RUN chmod +x start.sh
+RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
+RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
 # Переключаемся на пользователя
 USER appuser
 
-# Команда запуска
+# Entrypoint + CMD
+ENTRYPOINT ["./entrypoint.sh"]
 CMD ["./start.sh"]
