@@ -95,7 +95,9 @@ async def save_media(db: AsyncSession, file: UploadFile) -> int:
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         logger.warning("media_invalid_extension", extension=ext)
-        raise ValueError(f"Недопустимый тип файла: {ext}. Разрешены: {ALLOWED_EXTENSIONS}")
+        raise ValueError(
+            f"Недопустимый тип файла: {ext}. Разрешены: {ALLOWED_EXTENSIONS}"
+        )
 
     # --- Валидация размера и чтение содержимого ---
     content = await file.read()
@@ -104,13 +106,16 @@ async def save_media(db: AsyncSession, file: UploadFile) -> int:
 
     if len(content) > MAX_FILE_SIZE:
         logger.warning("media_file_too_large", size=len(content))
-        raise ValueError(f"Файл слишком большой: {len(content)} байт. Максимум: {MAX_FILE_SIZE}")
+        raise ValueError(
+            f"Файл слишком большой: {len(content)} байт. Максимум: {MAX_FILE_SIZE}"
+        )
 
     # --- Проверка «магических байтов» ---
     valid_image = (
         content.startswith(b"\xff\xd8\xff")  # JPEG
         or content.startswith(b"\x89PNG")  # PNG
         or content.startswith(b"GIF")  # GIF
+        or (content.startswith(b"RIFF") and len(content) >= 12 and content[8:12] == b"WEBP")  # WebP
     )
     if not valid_image:
         logger.warning("media_invalid_magic_bytes")
@@ -185,9 +190,7 @@ async def create_tweet(
     # --- Привязка медиафайлов ---
     if media_ids:
         stmt = (
-            update(Media)
-            .where(Media.id.in_(media_ids))
-            .values(tweet_id=new_tweet.id)
+            update(Media).where(Media.id.in_(media_ids)).values(tweet_id=new_tweet.id)
         )
         await db.execute(stmt)
 
@@ -257,7 +260,9 @@ async def delete_tweet(
         return False, []
 
     if tweet.author_id != user_id:
-        logger.warning("tweet_delete_permission_denied", user_id=user_id, tweet_id=tweet_id)
+        logger.warning(
+            "tweet_delete_permission_denied", user_id=user_id, tweet_id=tweet_id
+        )
         raise PermissionError("Вы не можете удалить чужой твит")
 
     # --- Удаление ---

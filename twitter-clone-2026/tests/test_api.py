@@ -325,8 +325,8 @@ async def test_delete_foreign_tweet(
     )
 
     # 4. Проверки (Assertions)
-    assert response.status_code == 200
-    data = response.json()
+    assert response.status_code == 403
+    data = response.json()["detail"]
     assert data["result"] is False
     assert "error_message" in data
     assert (
@@ -398,7 +398,7 @@ async def test_redis_connection(redis_client: "redis.Redis[str]") -> None:
     test_key = "pytest:test:redis"
     test_value = "hello_redis"
 
-    await redis_client.set(test_key, test_value, ex=60)
+    await redis_client.set(test_key, test_value, ex=10)
     result = await redis_client.get(test_key)
 
     # 3. Проверяем, что значение записалось и прочиталось

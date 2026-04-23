@@ -18,6 +18,8 @@ from libs.database import Base
 
 # !!! ВАЖНО: Импортируем все модели, чтобы Alembic их увидел !!!
 # Если модели не импортированы, Base.metadata будет пустым, и миграция создастся пустой!
+from services.tweets.app.models import Like, Media, Tweet  # noqa: F401
+from services.users.app.models import Follower, User  # noqa: F401
 
 # ----------------------------------------------------------------
 

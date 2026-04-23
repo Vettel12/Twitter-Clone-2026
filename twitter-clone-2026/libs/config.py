@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
 
     # Kafka
-    kafka_url: str = "kafka:9092"
+    kafka_bootstrap_servers: str = "kafka:9092"
 
     # Redis
     redis_url: str = "redis://redis:6379/0"

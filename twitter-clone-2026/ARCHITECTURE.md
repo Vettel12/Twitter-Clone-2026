@@ -104,7 +104,7 @@ Client                          FastAPI                        PostgreSQL       
   │            │                  │◀── [Tweet, Tweet, ...] ────────│                │
   │            │                  │                                │                │
   │            │                  │── 3. SET feed:{user_id} ──────────────────────▶│
-  │            │                  │   ex=60 (TTL)                  │                │
+  │            │                  │   ex=10 (TTL)                  │                │
   │            │                  │                                │                │
   │            │                  │── 4. Вернуть данные ──────────▶│                │
   │            ▼                  │                                │                │
@@ -279,7 +279,7 @@ gateway/main.py
 ┌─────────┐
 │  SET    │
 │  cache  │
-│  TTL=60 │
+│  TTL=10 │
 └────┬────┘
      │
      ▼
@@ -290,7 +290,7 @@ gateway/main.py
 
 | Паттерн | Пример | TTL | Описание |
 |---------|--------|-----|----------|
-| `feed:{user_id}` | `feed:42` | 60s | Лента пользователя (JSON) |
+| `feed:{user_id}` | `feed:42` | 10s | Лента пользователя (JSON) |
 | `feed:{user_id}:lock` | `feed:42:lock` | 5s | Lock от thundering herd |
 | `feed:{user_id}:version` | `feed:42:version` | 5s | Счётчик версии кэша |
 | `processed_events` | Redis Set | 3600s | Deduplication Kafka |

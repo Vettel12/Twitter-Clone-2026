@@ -52,7 +52,6 @@ Thumbs.db
 *.log
 
 # Frontend (если есть)
-frontend/
 node_modules/
 
 # Media (монтируется через volume)

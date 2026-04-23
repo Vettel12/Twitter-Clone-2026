@@ -21,8 +21,8 @@ logger = structlog.get_logger(__name__)
 
 # === КОНСТАНТЫ ===
 
-# Время жизни кэша ленты в секундах (1 минута)
-FEED_TTL_SECONDS = 60
+# Время жизни кэша ленты в секундах (10 секунд)
+FEED_TTL_SECONDS = 10
 
 # Время жизни блокировки кэша в секундах (защита от thundering herd)
 CACHE_LOCK_TTL_SECONDS = 5

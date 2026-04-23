@@ -153,7 +153,9 @@ if os.path.exists(frontend_path):
 
 # Монтируем статические файлы для медиа
 # Используем переменную окружения MEDIA_DIR для единообразия (Docker, K8s, тесты)
-media_path = os.environ.get("MEDIA_DIR", os.path.join(os.path.dirname(__file__), "..", "..", "media"))
+media_path = os.environ.get(
+    "MEDIA_DIR", os.path.join(os.path.dirname(__file__), "..", "..", "media")
+)
 if os.path.exists(media_path):
     app.mount("/media", StaticFiles(directory=media_path), name="media")
 

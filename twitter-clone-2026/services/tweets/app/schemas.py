@@ -49,6 +49,14 @@ class MediaUploadResponse(BaseModel):
     media_id: int
 
 
+class MediaUploadError(BaseModel):
+    """Ответ при ошибке загрузки картинки (POST /api/medias)."""
+
+    result: bool = False
+    error_type: str
+    error_message: str
+
+
 class TweetCreateResponse(BaseModel):
     """Ответ при создании твита."""
 

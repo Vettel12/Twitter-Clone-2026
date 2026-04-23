@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Annotated, Any, List
 
 import structlog
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.auth import get_current_user
@@ -54,8 +54,24 @@ async def upload_media(
     """
     logger.info("media_upload_start", user_id=user.id, filename=file.filename)
 
-    media_id = await crud.save_media(db, file)
-    logger.info("media_upload_success", user_id=user.id, media_id=media_id)
+    try:
+        media_id = await crud.save_media(db, file)
+        logger.info("media_upload_success", user_id=user.id, media_id=media_id)
+    except ValueError as e:
+        logger.warning(
+            "media_upload_validation_error",
+            user_id=user.id,
+            filename=file.filename,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "result": False,
+                "error_type": "ValidationError",
+                "error_message": str(e),
+            },
+        )
 
     return schemas.MediaUploadResponse(media_id=media_id)
 
@@ -111,11 +127,14 @@ async def delete_tweet(
         success, follower_ids = await crud.delete_tweet(db, user.id, tweet_id)
         if not success:
             logger.warning("tweet_delete_not_found", tweet_id=tweet_id)
-            return {
-                "result": False,
-                "error_type": "NotFoundError",
-                "error_message": "Твит не найден",
-            }
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "result": False,
+                    "error_type": "NotFoundError",
+                    "error_message": "Твит не найден",
+                },
+            )
 
         # Инвалидируем кэш автора и всех его подписчиков
         await invalidate_user_and_followers_cache(user.id, follower_ids)
@@ -123,12 +142,17 @@ async def delete_tweet(
         return {"result": True}
 
     except PermissionError as e:
-        logger.warning("tweet_delete_permission_denied", user_id=user.id, tweet_id=tweet_id)
-        return {
-            "result": False,
-            "error_type": "PermissionError",
-            "error_message": str(e),
-        }
+        logger.warning(
+            "tweet_delete_permission_denied", user_id=user.id, tweet_id=tweet_id
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "result": False,
+                "error_type": "PermissionError",
+                "error_message": str(e),
+            },
+        )
 
 
 # === ЛАЙКИ ===
@@ -275,7 +299,7 @@ async def get_tweet_feed(
     Получить ленту твитов с кэшированием в Redis.
 
     Стратегия Cache-Aside с защитой от thundering herd (cache-lock).
-    TTL кэша — 60 секунд.
+    TTL кэша — 10 секунд.
 
     При попадании в кэш (HIT) данные возвращаются мгновенно.
     При промахе (MISS) — запрос к базе с последующей записью в кэш.
@@ -326,7 +350,9 @@ async def get_tweet_feed(
 
     # --- Чтение с защитой от thundering herd ---
     try:
-        cached_data = await get_with_lock(cache_key, _fetch_and_serialize, FEED_TTL_SECONDS)
+        cached_data = await get_with_lock(
+            cache_key, _fetch_and_serialize, FEED_TTL_SECONDS
+        )
         if cached_data:
             return schemas.TweetListResponse.model_validate_json(cached_data)
     except Exception as e:

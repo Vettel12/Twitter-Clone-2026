@@ -21,8 +21,7 @@ async def handle_tweet_created(event: TweetCreatedEvent) -> None:
     Реализует deduplication по event_id для предотвращения повторной обработки.
     """
     logger.info(
-        f"Received event for tweet {event.data.tweet_id} "
-        f"(event_id={event.event_id})"
+        f"Received event for tweet {event.data.tweet_id} (event_id={event.event_id})"
     )
 
     # === DEDUPLICATION CHECK ===
