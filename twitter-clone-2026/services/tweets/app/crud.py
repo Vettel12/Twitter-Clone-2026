@@ -115,7 +115,11 @@ async def save_media(db: AsyncSession, file: UploadFile) -> int:
         content.startswith(b"\xff\xd8\xff")  # JPEG
         or content.startswith(b"\x89PNG")  # PNG
         or content.startswith(b"GIF")  # GIF
-        or (content.startswith(b"RIFF") and len(content) >= 12 and content[8:12] == b"WEBP")  # WebP
+        or (
+            content.startswith(b"RIFF")
+            and len(content) >= 12
+            and content[8:12] == b"WEBP"
+        )  # WebP
     )
     if not valid_image:
         logger.warning("media_invalid_magic_bytes")

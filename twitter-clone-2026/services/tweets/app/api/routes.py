@@ -71,7 +71,7 @@ async def upload_media(
                 "error_type": "ValidationError",
                 "error_message": str(e),
             },
-        )
+        ) from e
 
     return schemas.MediaUploadResponse(media_id=media_id)
 
@@ -152,7 +152,7 @@ async def delete_tweet(
                 "error_type": "PermissionError",
                 "error_message": str(e),
             },
-        )
+        ) from e
 
 
 # === ЛАЙКИ ===

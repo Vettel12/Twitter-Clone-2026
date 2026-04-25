@@ -1,16 +1,23 @@
-from typing import Any, Callable, TypeVar, Union
+# Экспортируем events, чтобы работало: from locust import events
+# Декоратор task
+from typing import Any, Callable, TypeVar, overload
 
-# Определяем переменную для функций-задач, чтобы типизация была точной
-F = TypeVar("F", bound=Callable[..., Any])
+from . import events as events
 
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+@overload
+def task(func: _F) -> _F: ...
+@overload
+def task(weight: int) -> Callable[[_F], _F]: ...
+
+# Функция between
 def between(min_wait: float, max_wait: float) -> Callable[[Any], float]: ...
 
-# [Any, Any], чтобы Callable не был «голым»
-def task(weight: int = ...) -> Callable[[F], F]: ...
-
-class HttpUser:
-    # Union описывает возможные варианты wait_time в Locust
-    wait_time: Union[float, tuple[float, float], Callable[[Any], float]]
-    client: Any
+# Базовые классы
+class User:
+    wait_time: Callable[[Any], float] | None
     def on_start(self) -> None: ...
     def on_stop(self) -> None: ...
+
+class HttpUser(User): ...  # можно расширить при необходимости

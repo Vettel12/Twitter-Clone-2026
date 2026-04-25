@@ -37,7 +37,7 @@ dependencies = [
     "redis>=5.2.1",
     
     # Utils
-    "python-multipart>=0.0.22", # For file uploads
+    "python-multipart>=0.0.26", # For file uploads
     "aiofiles>=24.1.0",         # Async file I/O
 
     "faker>=40.11.1",  # Для генерации тестовых данных
@@ -154,3 +154,10 @@ exclude_lines = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["libs", "services"]
+
+# ==========================================
+# 7. bandit Settings
+# ==========================================
+
+[tool.bandit]
+exclude_dirs = ["tests", "scripts", ".venv", "*/tests/*", "locustfile.py"]

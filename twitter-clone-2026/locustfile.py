@@ -1,5 +1,6 @@
 import logging
 import random
+from argparse import ArgumentParser
 from typing import Callable
 
 from locust import between, events, task
@@ -9,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 @events.init_command_line_parser.add_listener
-def on_parser(parser, **kwargs):
+def on_parser(parser: ArgumentParser) -> None:
     """Добавляем кастомный параметр --api-key для Locust."""
     parser.add_argument(
         "--api-key",

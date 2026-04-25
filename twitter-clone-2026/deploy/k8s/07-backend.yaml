@@ -38,8 +38,8 @@ spec:
               until nc -z postgres-service 5432; do echo "Postgres is unavailable - sleeping"; sleep 5; done
               echo "All infrastructure is ready."
           resources:
-            requests: { memory: "128Mi", cpu: "100m" }
-            limits: { memory: "256Mi", cpu: "200m" }
+            requests: { memory: "256Mi", cpu: "250m" }
+            limits: { memory: "512Mi", cpu: "500m" }
 
         - name: run-migrations
           image: twitter-clone-2026:latest
@@ -49,8 +49,8 @@ spec:
             - configMapRef: { name: app-config }
             - secretRef: { name: db-credentials }
           resources:
-            requests: { memory: "128Mi", cpu: "100m" }
-            limits: { memory: "256Mi", cpu: "200m" }
+            requests: { memory: "256Mi", cpu: "250m" }
+            limits: { memory: "512Mi", cpu: "500m" }
 
       containers:
         - name: api
