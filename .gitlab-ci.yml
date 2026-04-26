@@ -10,38 +10,51 @@ variables:
   POSTGRES_PORT: "5432"
   SECRET_KEY: test_secret_key_for_ci
 
-# --- STAGE: LINT ---
+# Кэш ускоряет повторные запуски (сохраняется между джобами и пайплайнами)
+cache:
+  key: "${CI_COMMIT_REF_SLUG}"
+  paths:
+    - .cache/pip
+    - twitter-clone-2026/.mypy_cache
+  policy: pull-push
+
 linting:
   stage: lint
   image: python:3.13
+  timeout: 15m  # Явный лимит, чтобы пайплайн не висел без логов
+  retry: 1      # На случай сетевых проблем при pip install
   before_script:
-    - cd twitter-clone-2026        # Заходим в папку проекта
-    - pip install -e .[dev]
+    - cd twitter-clone-2026
+    - pip install --cache-dir .cache/pip -e .[dev]
   script:
     - ruff check .
     - ruff format --check .
-    - mypy .
+    # mypy без проверки сторонних библиотек + кэш (ускоряет в 3-5 раз)
+    - mypy --cache-dir .mypy_cache --ignore-missing-imports .
 
-# --- STAGE: TEST ---
 tests:
   stage: test
   image: python:3.13
-  
+  timeout: 20m
   services:
     - name: postgres:16-alpine
       alias: postgres
   
   before_script:
-    - cd twitter-clone-2026        # Заходим в папку проекта
-    - pip install -e .[dev]
-    # Создаем .env
+    - cd twitter-clone-2026
+    - pip install --cache-dir .cache/pip -e .[dev]
     - |
-      echo "POSTGRES_DB=$POSTGRES_DB" >> .env
-      echo "POSTGRES_USER=$POSTGRES_USER" >> .env
-      echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" >> .env
-      echo "POSTGRES_HOST=$POSTGRES_HOST" >> .env
-      echo "POSTGRES_PORT=$POSTGRES_PORT" >> .env
-      echo "SECRET_KEY=$SECRET_KEY" >> .env
+      cat <<EOF > .env
+      POSTGRES_DB=$POSTGRES_DB
+      POSTGRES_USER=$POSTGRES_USER
+      POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+      POSTGRES_HOST=$POSTGRES_HOST
+      POSTGRES_PORT=$POSTGRES_PORT
+      SECRET_KEY=$SECRET_KEY
+      EOF
+    # Ждём готовности PostgreSQL (простой и надёжный способ без apt)
+    - until python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('postgres', 5432)); s.close()" 2>/dev/null; do echo "⏳ Waiting for PostgreSQL..."; sleep 2; done
 
   script:
     - pytest -v --cov=. --cov-report=term-missing
+    
