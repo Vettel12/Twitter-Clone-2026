@@ -1,70 +1,65 @@
 ```
-# Compiled and build artifacts
-*.pyc
+# Python
 __pycache__/
-*.o
-*.obj
+*.py[cod]
+*$py.class
 *.so
-*.dll
-*.exe
-*.class
-*.out
-
-# Dependencies
-.venv/
-venv/
-node_modules/
-.mypy_cache/
-.pytest_cache/
-.coverage
-coverage/
-htmlcov/
-
-# Build and distribution
-dist/
+.Python
 build/
-target/
-.gradle/
-
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-*.swo
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # Environment
 .env
 .env.local
 .env.*
 
-# Editors and IDEs
+# IDE
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# System files
-.DS_Store
-Thumbs.db
+# Logs
+*.log
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+.coverage.*
+
+# Pytest
+.pytest_cache/
+
+# Alembic
+alembic/versions/*.pyc
 
 # Frontend build artifacts
-frontend/js/*.js.map
-frontend/css/*.css.map
+frontend/css/*.css
+frontend/js/*.js
+frontend/js/*.map
+frontend/dist/
 
 # Docker
+Dockerfile*
 .dockerignore
 
-# Database
-*.db
-*.sqlite
-*.sqlite3
+# Kubernetes
+deploy/k8s/secrets.yaml
 
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# Temporary files
+*.tmp
+*.swp
+*~
 ```

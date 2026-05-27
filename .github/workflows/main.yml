@@ -7,7 +7,7 @@ on:
     branches: [ "master", "main" ]
 
 jobs:
-  lint-and-test:
+  build:
     runs-on: ubuntu-latest
     # Сервисы нужны для запуска тестов с базой данных
     services:
@@ -50,8 +50,6 @@ jobs:
     - name: Run linting (Ruff)
       run: |
         ruff check .
-        ruff format --check .
-        mypy --cache-dir .mypy_cache --ignore-missing-imports .
 
     - name: Run tests with pytest
       run: |

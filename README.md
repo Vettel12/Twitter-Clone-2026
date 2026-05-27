@@ -840,7 +840,7 @@ make quick-start
 ### Шаг 1: Клонирование репозитория
 ```bash
 git clone <URL_ВАШЕГО_РЕПОЗИТОРИЯ>
-cd /workspace
+cd twitter-clone-2026
 ```
 
 ### Шаг 2: Настройка переменных окружения
@@ -1878,7 +1878,7 @@ docker-compose -f deploy/docker-compose.yml down -v
 ```bash
 # 1. Клонировать репозиторий
 git clone <URL>
-cd /workspace
+cd twitter-clone-2026
 
 # 2. Создать .env из примера
 cp .env.example .env
@@ -2007,7 +2007,7 @@ python -m pytest tests/ -v
 ## 📁 Структура Проекта
 
 ```
-.
+twitter-clone-2026/
 ├── Makefile                        # Полезные команды (make help)
 ├── deploy/
 │   ├── docker-compose.yml          # Локальный запуск (Zookeeper + Kafka)
@@ -2111,7 +2111,7 @@ python -m pytest tests/ -v
 ```bash
 # Клонировать репозиторий
 git clone <URL>
-cd /workspace
+cd twitter-clone-2026
 
 # Запустить Docker Compose
 docker-compose -f deploy/docker-compose.yml up --build -d

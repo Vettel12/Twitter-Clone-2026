@@ -31,23 +31,13 @@ from sqlalchemy.pool import NullPool
 # ------------------------------------------------------------------------------
 # ВАЖНО: Устанавливаем переменные СЕЙЧАС, чтобы при импорте
 # libs.config и других модулей ниже они уже подхватили правильные значения.
-# Определяем окружение: CI или локальная разработка
 # ------------------------------------------------------------------------------
 
-IS_CI = os.getenv("CI", "false").lower() == "true"
-
-if IS_CI:
-    # В GitHub Actions используем порты сервисов напрямую
-    os.environ["POSTGRES_HOST"] = "localhost"
-    os.environ["POSTGRES_PORT"] = "5432"  # Стандартный порт в CI
-    os.environ["REDIS_URL"] = "redis://localhost:6379/0"
-    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:9092"
-else:
-    # Локально используем порты из docker-compose
-    os.environ["POSTGRES_HOST"] = "localhost"
-    os.environ["POSTGRES_PORT"] = "5433"  # Порт из docker-compose для тестов
-    os.environ["REDIS_URL"] = "redis://localhost:6379/0"
-    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:9092"
+# Переопределяем хосты для локального запуска тестов
+os.environ["POSTGRES_HOST"] = "localhost"
+os.environ["POSTGRES_PORT"] = "5433"  # Порт из docker-compose для тестов
+os.environ["REDIS_URL"] = "redis://localhost:6379/0"
+os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:9092"
 
 # Создаём временную директорию для медиа-файлов тестов
 TEST_MEDIA_DIR = tempfile.mkdtemp(prefix="twitter_test_media_")
