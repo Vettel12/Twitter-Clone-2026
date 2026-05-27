@@ -1,100 +1,70 @@
-# ============================================
-# Секреты и конфигурация (НЕ ДОЛЖНЫ быть в git)
-# ============================================
-.env
-.env.*
-!.env.example
-
-# ============================================
-# Python
-# ============================================
-# Байт-код и кэш
+```
+# Compiled and build artifacts
+*.pyc
 __pycache__/
-*.py[cod]
-*$py.class
-*.pyo
+*.o
+*.obj
+*.so
+*.dll
+*.exe
+*.class
+*.out
 
-# Распространяемые пакеты
-*.egg
-*.egg-info/
+# Dependencies
+.venv/
+venv/
+node_modules/
+.mypy_cache/
+.pytest_cache/
+.coverage
+coverage/
+htmlcov/
+
+# Build and distribution
 dist/
 build/
-*.whl
-*.tar.gz
+target/
+.gradle/
 
-# ============================================
-# Виртуальные окружения
-# ============================================
-venv/
-.venv/
-env/
-ENV/
-.conda/
-
-# ============================================
-# IDE и редакторы
-# ============================================
-# PyCharm / IntelliJ
-.idea/
-*.iml
-*.iws
-*.ipr
-
-# VS Code
-.vscode/
-*.code-workspace
-!.vscode/settings.json.example
-!.vscode/launch.json
-
-# Vim / Nano
+# Logs and temp files
+*.log
+*.tmp
 *.swp
 *.swo
-*~
-*.un~
 
-# ============================================
-# Тестирование и покрытие
-# ============================================
-.pytest_cache/
-pytestdebug.log
-.coverage
-coverage.xml
-coverage.json
-htmlcov/
-.tox/
-.mypy_cache/
-.ruff_cache/
+# Environment
+.env
+.env.local
+.env.*
 
-# ============================================
-# Логи и временные файлы
-# ============================================
-*.log
-logs/
-*.tmp
-*.temp
+# Editors and IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# ============================================
-# Медиафайлы (загруженные пользователями)
-# ============================================
-media/
-media/*
-!media/.gitkeep
-
-# ============================================
-# Docker (локальные артефакты)
-# ============================================
-.docker/
-*.tar
-
-# ============================================
-# OS
-# ============================================
+# System files
 .DS_Store
 Thumbs.db
-desktop.ini
 
-# ============================================
-# Git
-# ============================================
-*.orig
-.git-rewrite/
+# Frontend build artifacts
+frontend/js/*.js.map
+frontend/css/*.css.map
+
+# Docker
+.dockerignore
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+```
