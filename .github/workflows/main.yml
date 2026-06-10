@@ -46,11 +46,15 @@ jobs:
         echo "POSTGRES_HOST=localhost" >> .env
         echo "POSTGRES_PORT=5432" >> .env
         echo "SECRET_KEY=test_secret_key" >> .env
+        echo "KAFKA_BOOTSTRAP_SERVERS=localhost:9092" >> .env
+        echo "REDIS_URL=redis://localhost:6379/0" >> .env
 
     - name: Run linting (Ruff)
       run: |
         ruff check .
 
     - name: Run tests with pytest
+      env:
+        CI: "true"
       run: |
         pytest -v --cov=. --cov-report=term-missing
