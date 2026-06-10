@@ -261,61 +261,76 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     app.dependency_overrides.clear()
 
 
-# === 5.4. Redis-клиент для тестов (мок) ===
+# === 5.4. Redis-клиент для тестов (реальный или мок) ===
 @pytest.fixture(scope="function")
 async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:  # noqa: C901
     """
-    Мокированный клиент Redis для тестов.
-    Подменяет глобальный синглтон в libs.redis_client на MockRedis.
-    В CI всегда используем MockRedis.
+    Клиент Redis для тестов.
+    В CI подключаемся к реальному Redis из service container.
+    Локально, если Redis недоступен, используем MockRedis.
     """
     reset_redis_singleton()
 
+    import os
     import time
 
-    class MockRedis:
-        """Простая эмуляция Redis для тестов."""
+    # Проверяем, запущен ли реальный Redis (в CI он должен быть)
+    redis_host = os.getenv("REDIS_HOST", "localhost")
+    redis_port = int(os.getenv("REDIS_PORT", "6379"))
 
-        def __init__(self):
-            self._cache: dict[str, tuple[str, float | None]] = {}
+    try:
+        import redis.asyncio as redis
+        real_client = redis.Redis(host=redis_host, port=redis_port, db=0, decode_responses=True)
+        await real_client.ping()
+        # Если ping успешен, используем реальный Redis
+        client = real_client
+        # Очищаем тестовую базу перед использованием
+        await client.flushdb()
+    except Exception:
+        # Если не удалось подключиться, используем мок
+        class MockRedis:
+            """Простая эмуляция Redis для тестов."""
 
-        async def ping(self) -> bool:
-            return True
+            def __init__(self):
+                self._cache: dict[str, tuple[str, float | None]] = {}
 
-        async def set(self, key: str, value: str, ex: int = None, nx: bool = False) -> bool:
-            if nx and key in self._cache:
-                return False
-            expire_at = (time.time() + ex) if ex else None
-            self._cache[key] = (value, expire_at)
-            return True
+            async def ping(self) -> bool:
+                return True
 
-        async def get(self, key: str) -> str | None:
-            if key not in self._cache:
-                return None
-            value, expire_at = self._cache[key]
-            if expire_at and time.time() > expire_at:
-                del self._cache[key]
-                return None
-            return value
+            async def set(self, key: str, value: str, ex: int = None, nx: bool = False) -> bool:
+                if nx and key in self._cache:
+                    return False
+                expire_at = (time.time() + ex) if ex else None
+                self._cache[key] = (value, expire_at)
+                return True
 
-        async def delete(self, *keys: str) -> int:
-            count = 0
-            for key in keys:
-                if key in self._cache:
+            async def get(self, key: str) -> str | None:
+                if key not in self._cache:
+                    return None
+                value, expire_at = self._cache[key]
+                if expire_at and time.time() > expire_at:
                     del self._cache[key]
-                    count += 1
-            return count
+                    return None
+                return value
 
-        async def ttl(self, key: str) -> int:
-            if key not in self._cache:
-                return -1
-            _, expire_at = self._cache[key]
-            if expire_at is None:
-                return -1
-            remaining = int(expire_at - time.time())
-            return max(0, remaining)
+            async def delete(self, *keys: str) -> int:
+                count = 0
+                for key in keys:
+                    if key in self._cache:
+                        del self._cache[key]
+                        count += 1
+                return count
 
-    client = MockRedis()
+            async def ttl(self, key: str) -> int:
+                if key not in self._cache:
+                    return -1
+                _, expire_at = self._cache[key]
+                if expire_at is None:
+                    return -1
+                remaining = int(expire_at - time.time())
+                return max(0, remaining)
+
+        client = MockRedis()
 
     # Подменяем глобальный синглтон в libs.redis_client
     redis_module.redis_client = client
@@ -325,18 +340,40 @@ async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:  # noqa: C
     # Очистка
     if hasattr(client, 'close'):
         await client.close()
+    elif hasattr(client, 'flushdb'):
+        await client.flushdb()
     reset_redis_singleton()
 
 
-# === 5.5. Kafka-брокер для тестов (мок) ===
+# === 5.5. Kafka-брокер для тестов (реальный или мок) ===
 @pytest.fixture(scope="function")
 async def kafka_broker() -> AsyncGenerator[KafkaBroker, None]:
     """
-    Мокированный KafkaBroker для тестов.
-    Не требует реального подключения к Kafka.
+    KafkaBroker для тестов.
+    В CI подключаемся к реальной Kafka из service container.
+    Локально, если Kafka недоступна, используем мок.
     """
-    broker = AsyncMock(spec=KafkaBroker)
-    broker.publish = AsyncMock()
-    broker.start = AsyncMock()
-    broker.stop = AsyncMock()
-    yield broker
+    import os
+
+    from aiokafka import AIOKafkaProducer
+
+    kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9093")
+
+    try:
+        # Пытаемся создать реального продюсера и подключиться
+        producer = AIOKafkaProducer(bootstrap_servers=kafka_servers)
+        await producer.start()
+        # Если успешно, используем реального продюсера
+        client = producer
+    except Exception:
+        # Если не удалось подключиться, используем мок
+        client = AsyncMock(spec=KafkaBroker)
+        client.publish = AsyncMock()
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+
+    yield client
+
+    # Очистка
+    if hasattr(client, 'stop'):
+        await client.stop()
