@@ -103,7 +103,7 @@ def get_test_db_url(base_url: str, db_name: str) -> str:
     # Для SQLite просто возвращаем URL с именем файла
     if base_url.startswith("sqlite"):
         return f"sqlite+aiosqlite:///{db_name}.db"
-    
+
     # Парсим исходный URL для PostgreSQL
     url_obj = URL.create(
         drivername=base_url.split("://")[0],  # postgresql+asyncpg
@@ -151,7 +151,7 @@ def setup_test_database() -> Generator[None, None, None]:
     Создаёт тестовую БД перед запуском всех тестов и удаляет после.
     В CI используем SQLite, локально — PostgreSQL из Docker.
     """
-    
+
     # Если в CI - пропускаем создание PostgreSQL БД (будет использоваться SQLite)
     if CI_ENV:
         # Для SQLite не нужно создавать БД заранее - она создаётся автоматически
@@ -281,34 +281,32 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 
 # === 5.4. Redis-клиент для тестов (мок) ===
 @pytest.fixture(scope="function")
-async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:
+async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:  # noqa: C901
     """
     Мокированный клиент Redis для тестов.
     Использует fakeredis если установлен, иначе простой мок с поддержкой основных команд.
     """
     reset_redis_singleton()
-    
+
     # Пытаемся импортировать fakeredis, если нет - используем мок
     try:
         from fakeredis import FakeAsyncRedis
         client = FakeAsyncRedis(decode_responses=True)
     except ImportError:
         # Если fakeredis не установлен, используем продвинутый мок
-        from unittest.mock import AsyncMock
-        from collections import OrderedDict
         import time
-        
+
         class MockRedis:
             """Простая эмуляция Redis для тестов."""
-            
+
             def __init__(self):
                 self._cache: dict[str, tuple[str, float | None]] = {}
-            
+
             async def set(self, key: str, value: str, ex: int = None) -> bool:
                 expire_at = (time.time() + ex) if ex else None
                 self._cache[key] = (value, expire_at)
                 return True
-            
+
             async def get(self, key: str) -> str | None:
                 if key not in self._cache:
                     return None
@@ -317,7 +315,7 @@ async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:
                     del self._cache[key]
                     return None
                 return value
-            
+
             async def delete(self, *keys: str) -> int:
                 count = 0
                 for key in keys:
@@ -325,7 +323,7 @@ async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:
                         del self._cache[key]
                         count += 1
                 return count
-            
+
             async def ttl(self, key: str) -> int:
                 if key not in self._cache:
                     return -1
@@ -334,7 +332,7 @@ async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:
                     return -1
                 remaining = int(expire_at - time.time())
                 return max(0, remaining)
-        
+
         client = MockRedis()
 
     yield client
