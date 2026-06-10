@@ -33,26 +33,23 @@ from sqlalchemy.pool import NullPool
 # libs.config и других модулей ниже они уже подхватили правильные значения.
 # ------------------------------------------------------------------------------
 
-# Проверяем, запущены ли тесты в CI (GitHub Actions) или локально с Docker
+# Определяем, запущены ли тесты в CI
 CI_ENV = os.getenv("CI", "false").lower() in ("true", "1", "yes")
 
 if CI_ENV:
-    # В CI используем SQLite для простоты (не требует Docker)
-    os.environ["USE_SQLITE"] = "true"
-    os.environ["POSTGRES_HOST"] = "localhost"
-    os.environ["POSTGRES_PORT"] = "5432"
-    os.environ["POSTGRES_USER"] = "testuser"
-    os.environ["POSTGRES_PASSWORD"] = "testpass"
-    os.environ["POSTGRES_DB"] = "testdb"
-    os.environ["REDIS_URL"] = "memory://"  # Будет заменено на MockRedis
-    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "mock://localhost:9092"
-    os.environ["SECRET_KEY"] = "test-secret-key-for-ci"
+    # В CI используем PostgreSQL из GitHub Actions service container
+    # Переменные берутся из .env файла, созданного в workflow
+    pass  # POSTGRES_HOST, POSTGRES_PORT и т.д. уже установлены в workflow
 else:
-    # Локально используем Docker-контейнеры
-    os.environ["POSTGRES_HOST"] = "localhost"
-    os.environ["POSTGRES_PORT"] = "5433"  # Порт из docker-compose для тестов
-    os.environ["REDIS_URL"] = "redis://localhost:6379/0"
-    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:9092"
+    # Локально используем PostgreSQL из Docker или других переменных окружения
+    os.environ["POSTGRES_HOST"] = os.getenv("POSTGRES_HOST", "localhost")
+    os.environ["POSTGRES_PORT"] = os.getenv("POSTGRES_PORT", "5432")
+    os.environ["POSTGRES_USER"] = os.getenv("POSTGRES_USER", "testuser")
+    os.environ["POSTGRES_PASSWORD"] = os.getenv("POSTGRES_PASSWORD", "testpass")
+    os.environ["POSTGRES_DB"] = os.getenv("POSTGRES_DB", "testdb")
+    os.environ["REDIS_URL"] = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    os.environ["SECRET_KEY"] = os.getenv("SECRET_KEY", "test-secret-key-for-ci")
 
 # Создаём временную директорию для медиа-файлов тестов
 TEST_MEDIA_DIR = tempfile.mkdtemp(prefix="twitter_test_media_")
@@ -89,7 +86,6 @@ from services.users.app.models import User  # noqa: E402
 # Отладочный вывод: убеждаемся, что settings подхватил наши переменные
 # Если здесь видите 'postgres' вместо 'localhost' — значит, settings
 # был импортирован раньше времени (проверьте, нет ли циклических импортов).
-print(f"✓ [DEBUG] CI_ENV = {CI_ENV}")
 print(f"✓ [DEBUG] settings.postgres_host = {settings.postgres_host}")
 print(f"✓ [DEBUG] settings.postgres_port = {settings.postgres_port}")
 
@@ -100,10 +96,6 @@ def get_test_db_url(base_url: str, db_name: str) -> str:
     Избегает ошибок при использовании .replace(), который может заменить
     часть строки в неожиданном месте.
     """
-    # Для SQLite просто возвращаем URL с именем файла
-    if base_url.startswith("sqlite"):
-        return f"sqlite+aiosqlite:///{db_name}.db"
-
     # Парсим исходный URL для PostgreSQL
     url_obj = URL.create(
         drivername=base_url.split("://")[0],  # postgresql+asyncpg
@@ -116,14 +108,9 @@ def get_test_db_url(base_url: str, db_name: str) -> str:
     return str(url_obj.render_as_string(hide_password=False))
 
 
-# Имя тестовой БД и её URL
-if CI_ENV:
-    # В CI используем SQLite в памяти
-    TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-    TEST_DB_NAME = ":memory:"
-else:
-    TEST_DB_NAME = f"{settings.postgres_db}_test"
-    TEST_DATABASE_URL = get_test_db_url(settings.sqlalchemy_database_url, TEST_DB_NAME)
+# Имя тестовой БД и её URL (только PostgreSQL)
+TEST_DB_NAME = f"{settings.postgres_db}_test"
+TEST_DATABASE_URL = get_test_db_url(settings.sqlalchemy_database_url, TEST_DB_NAME)
 
 
 async def mock_kafka_publish(*args: Any, **kwargs: Any) -> None:
@@ -149,15 +136,10 @@ def reset_redis_singleton() -> None:
 def setup_test_database() -> Generator[None, None, None]:
     """
     Создаёт тестовую БД перед запуском всех тестов и удаляет после.
-    В CI используем SQLite, локально — PostgreSQL из Docker.
+    Используется PostgreSQL из GitHub Actions service container в CI
+    или локально из Docker.
     """
-
-    # Если в CI - пропускаем создание PostgreSQL БД (будет использоваться SQLite)
-    if CI_ENV:
-        # Для SQLite не нужно создавать БД заранее - она создаётся автоматически
-        yield
-        return
-
+    # Используем PostgreSQL (CI или локально)
     async def _create_db() -> None:
         # URL для подключения к системной БД 'postgres' (чтобы создавать/удалять другие)
         admin_url = get_test_db_url(settings.sqlalchemy_database_url, "postgres")
@@ -284,56 +266,59 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:  # noqa: C901
     """
     Мокированный клиент Redis для тестов.
-    Использует fakeredis если установлен, иначе простой мок с поддержкой основных команд.
+    Подменяет глобальный синглтон в libs.redis_client на MockRedis.
+    В CI всегда используем MockRedis.
     """
     reset_redis_singleton()
 
-    # Пытаемся импортировать fakeredis, если нет - используем мок
-    try:
-        from fakeredis import FakeAsyncRedis
-        client = FakeAsyncRedis(decode_responses=True)
-    except ImportError:
-        # Если fakeredis не установлен, используем продвинутый мок
-        import time
+    import time
 
-        class MockRedis:
-            """Простая эмуляция Redis для тестов."""
+    class MockRedis:
+        """Простая эмуляция Redis для тестов."""
 
-            def __init__(self):
-                self._cache: dict[str, tuple[str, float | None]] = {}
+        def __init__(self):
+            self._cache: dict[str, tuple[str, float | None]] = {}
 
-            async def set(self, key: str, value: str, ex: int = None) -> bool:
-                expire_at = (time.time() + ex) if ex else None
-                self._cache[key] = (value, expire_at)
-                return True
+        async def ping(self) -> bool:
+            return True
 
-            async def get(self, key: str) -> str | None:
-                if key not in self._cache:
-                    return None
-                value, expire_at = self._cache[key]
-                if expire_at and time.time() > expire_at:
+        async def set(self, key: str, value: str, ex: int = None, nx: bool = False) -> bool:
+            if nx and key in self._cache:
+                return False
+            expire_at = (time.time() + ex) if ex else None
+            self._cache[key] = (value, expire_at)
+            return True
+
+        async def get(self, key: str) -> str | None:
+            if key not in self._cache:
+                return None
+            value, expire_at = self._cache[key]
+            if expire_at and time.time() > expire_at:
+                del self._cache[key]
+                return None
+            return value
+
+        async def delete(self, *keys: str) -> int:
+            count = 0
+            for key in keys:
+                if key in self._cache:
                     del self._cache[key]
-                    return None
-                return value
+                    count += 1
+            return count
 
-            async def delete(self, *keys: str) -> int:
-                count = 0
-                for key in keys:
-                    if key in self._cache:
-                        del self._cache[key]
-                        count += 1
-                return count
+        async def ttl(self, key: str) -> int:
+            if key not in self._cache:
+                return -1
+            _, expire_at = self._cache[key]
+            if expire_at is None:
+                return -1
+            remaining = int(expire_at - time.time())
+            return max(0, remaining)
 
-            async def ttl(self, key: str) -> int:
-                if key not in self._cache:
-                    return -1
-                _, expire_at = self._cache[key]
-                if expire_at is None:
-                    return -1
-                remaining = int(expire_at - time.time())
-                return max(0, remaining)
+    client = MockRedis()
 
-        client = MockRedis()
+    # Подменяем глобальный синглтон в libs.redis_client
+    redis_module.redis_client = client
 
     yield client
 
