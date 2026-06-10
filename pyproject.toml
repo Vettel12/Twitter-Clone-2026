@@ -55,6 +55,7 @@ dev = [
     "pytest-cov>=6.0.0",        # Плагин для покрытия в pytest
     "httpx>=0.27.0",          # Async client for tests
     "coverage[toml]>=7.6.0",
+    "aiosqlite>=0.20.0",      # SQLite driver for testing in CI
 
     # Linting & Types
     "ruff>=0.6.0",

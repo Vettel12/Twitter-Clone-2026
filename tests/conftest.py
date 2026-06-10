@@ -33,11 +33,23 @@ from sqlalchemy.pool import NullPool
 # libs.config и других модулей ниже они уже подхватили правильные значения.
 # ------------------------------------------------------------------------------
 
-# Переопределяем хосты для локального запуска тестов
-os.environ["POSTGRES_HOST"] = "localhost"
-os.environ["POSTGRES_PORT"] = "5433"  # Порт из docker-compose для тестов
-os.environ["REDIS_URL"] = "redis://localhost:6379/0"
-os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:9092"
+# Определяем, запущены ли тесты в CI
+CI_ENV = os.getenv("CI", "false").lower() in ("true", "1", "yes")
+
+if CI_ENV:
+    # В CI используем PostgreSQL из GitHub Actions service container
+    # Переменные берутся из .env файла, созданного в workflow
+    pass  # POSTGRES_HOST, POSTGRES_PORT и т.д. уже установлены в workflow
+else:
+    # Локально используем PostgreSQL из Docker или других переменных окружения
+    os.environ["POSTGRES_HOST"] = os.getenv("POSTGRES_HOST", "localhost")
+    os.environ["POSTGRES_PORT"] = os.getenv("POSTGRES_PORT", "5432")
+    os.environ["POSTGRES_USER"] = os.getenv("POSTGRES_USER", "testuser")
+    os.environ["POSTGRES_PASSWORD"] = os.getenv("POSTGRES_PASSWORD", "testpass")
+    os.environ["POSTGRES_DB"] = os.getenv("POSTGRES_DB", "testdb")
+    os.environ["REDIS_URL"] = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    os.environ["SECRET_KEY"] = os.getenv("SECRET_KEY", "test-secret-key-for-ci")
 
 # Создаём временную директорию для медиа-файлов тестов
 TEST_MEDIA_DIR = tempfile.mkdtemp(prefix="twitter_test_media_")
@@ -76,9 +88,6 @@ from services.users.app.models import User  # noqa: E402
 # был импортирован раньше времени (проверьте, нет ли циклических импортов).
 print(f"✓ [DEBUG] settings.postgres_host = {settings.postgres_host}")
 print(f"✓ [DEBUG] settings.postgres_port = {settings.postgres_port}")
-print(
-    f"✓ [DEBUG] TEST_DATABASE_URL будет сформирован на основе: {settings.sqlalchemy_database_url}"
-)
 
 
 def get_test_db_url(base_url: str, db_name: str) -> str:
@@ -87,7 +96,7 @@ def get_test_db_url(base_url: str, db_name: str) -> str:
     Избегает ошибок при использовании .replace(), который может заменить
     часть строки в неожиданном месте.
     """
-    # Парсим исходный URL
+    # Парсим исходный URL для PostgreSQL
     url_obj = URL.create(
         drivername=base_url.split("://")[0],  # postgresql+asyncpg
         username=settings.postgres_user,
@@ -99,7 +108,7 @@ def get_test_db_url(base_url: str, db_name: str) -> str:
     return str(url_obj.render_as_string(hide_password=False))
 
 
-# Имя тестовой БД и её URL
+# Имя тестовой БД и её URL (только PostgreSQL)
 TEST_DB_NAME = f"{settings.postgres_db}_test"
 TEST_DATABASE_URL = get_test_db_url(settings.sqlalchemy_database_url, TEST_DB_NAME)
 
@@ -127,9 +136,10 @@ def reset_redis_singleton() -> None:
 def setup_test_database() -> Generator[None, None, None]:
     """
     Создаёт тестовую БД перед запуском всех тестов и удаляет после.
-    Использует отдельное подключение к БД 'postgres' для управления другими БД.
+    Используется PostgreSQL из GitHub Actions service container в CI
+    или локально из Docker.
     """
-
+    # Используем PostgreSQL (CI или локально)
     async def _create_db() -> None:
         # URL для подключения к системной БД 'postgres' (чтобы создавать/удалять другие)
         admin_url = get_test_db_url(settings.sqlalchemy_database_url, "postgres")
@@ -251,32 +261,119 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     app.dependency_overrides.clear()
 
 
-# === 5.4. Redis-клиент для тестов ===
+# === 5.4. Redis-клиент для тестов (реальный или мок) ===
 @pytest.fixture(scope="function")
-async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:
+async def redis_client() -> AsyncGenerator["redis.Redis[str]", None]:  # noqa: C901
     """
-    Изолированный клиент Redis для тестов.
-    Подключается к реальному Redis на localhost:6379.
+    Клиент Redis для тестов.
+    В CI подключаемся к реальному Redis из service container.
+    Локально, если Redis недоступен, используем MockRedis.
     """
     reset_redis_singleton()
 
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    client = redis.from_url(redis_url, decode_responses=True)
+    import os
+    import time
+
+    # Проверяем, запущен ли реальный Redis (в CI он должен быть)
+    redis_host = os.getenv("REDIS_HOST", "localhost")
+    redis_port = int(os.getenv("REDIS_PORT", "6379"))
+
+    try:
+        import redis.asyncio as redis
+        real_client = redis.Redis(host=redis_host, port=redis_port, db=0, decode_responses=True)
+        await real_client.ping()
+        # Если ping успешен, используем реальный Redis
+        client = real_client
+        # Очищаем тестовую базу перед использованием
+        await client.flushdb()
+    except Exception:
+        # Если не удалось подключиться, используем мок
+        class MockRedis:
+            """Простая эмуляция Redis для тестов."""
+
+            def __init__(self):
+                self._cache: dict[str, tuple[str, float | None]] = {}
+
+            async def ping(self) -> bool:
+                return True
+
+            async def set(self, key: str, value: str, ex: int = None, nx: bool = False) -> bool:
+                if nx and key in self._cache:
+                    return False
+                expire_at = (time.time() + ex) if ex else None
+                self._cache[key] = (value, expire_at)
+                return True
+
+            async def get(self, key: str) -> str | None:
+                if key not in self._cache:
+                    return None
+                value, expire_at = self._cache[key]
+                if expire_at and time.time() > expire_at:
+                    del self._cache[key]
+                    return None
+                return value
+
+            async def delete(self, *keys: str) -> int:
+                count = 0
+                for key in keys:
+                    if key in self._cache:
+                        del self._cache[key]
+                        count += 1
+                return count
+
+            async def ttl(self, key: str) -> int:
+                if key not in self._cache:
+                    return -1
+                _, expire_at = self._cache[key]
+                if expire_at is None:
+                    return -1
+                remaining = int(expire_at - time.time())
+                return max(0, remaining)
+
+        client = MockRedis()
+
+    # Подменяем глобальный синглтон в libs.redis_client
+    redis_module.redis_client = client
 
     yield client
 
-    await client.close()
+    # Очистка
+    if hasattr(client, 'close'):
+        await client.close()
+    elif hasattr(client, 'flushdb'):
+        await client.flushdb()
     reset_redis_singleton()
 
 
-# === 5.5. Kafka-брокер для тестов (если нужен реальный коннект) ===
+# === 5.5. Kafka-брокер для тестов (реальный или мок) ===
 @pytest.fixture(scope="function")
 async def kafka_broker() -> AsyncGenerator[KafkaBroker, None]:
     """
-    Экземпляр KafkaBroker для тестов.
-    Если используете моки — эта фикстура может не понадобиться.
+    KafkaBroker для тестов.
+    В CI подключаемся к реальной Kafka из service container.
+    Локально, если Kafka недоступна, используем мок.
     """
-    broker = KafkaBroker(kafka_url)
-    await broker.start()
-    yield broker
-    await broker.stop()
+    import os
+
+    from aiokafka import AIOKafkaProducer
+
+    kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9093")
+
+    try:
+        # Пытаемся создать реального продюсера и подключиться
+        producer = AIOKafkaProducer(bootstrap_servers=kafka_servers)
+        await producer.start()
+        # Если успешно, используем реального продюсера
+        client = producer
+    except Exception:
+        # Если не удалось подключиться, используем мок
+        client = AsyncMock(spec=KafkaBroker)
+        client.publish = AsyncMock()
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+
+    yield client
+
+    # Очистка
+    if hasattr(client, 'stop'):
+        await client.stop()

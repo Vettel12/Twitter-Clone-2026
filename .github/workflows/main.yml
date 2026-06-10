@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Сервисы нужны для запуска тестов с базой данных
+    # Сервисы нужны для запуска тестов с базой данных, Redis и Kafka
     services:
       postgres:
         image: postgres:16-alpine
@@ -21,6 +21,45 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      zookeeper:
+        image: confluentinc/cp-zookeeper:7.5.0
+        env:
+          ZOOKEEPER_CLIENT_PORT: 2181
+          ZOOKEEPER_TICK_TIME: 2000
+        options: >-
+          --health-cmd "echo ruok | nc localhost 2181 | grep imok"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      kafka:
+        image: confluentinc/cp-kafka:7.5.0
+        env:
+          KAFKA_BROKER_ID: 1
+          KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+          KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
+        ports:
+          - 9093:9093
+        options: >-
+          --health-cmd "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -38,6 +77,19 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e .[dev]
 
+    - name: Wait for Kafka to be ready
+      run: |
+        echo "Waiting for Kafka..."
+        for i in {1..30}; do
+          if docker exec ${{ job.services.kafka.id }} kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1; then
+            echo "Kafka is ready!"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "Kafka did not become ready in time."
+        exit 1
+
     - name: Create .env file for tests
       run: |
         echo "POSTGRES_DB=twitter_clone_db_test" >> .env
@@ -46,11 +98,15 @@ jobs:
         echo "POSTGRES_HOST=localhost" >> .env
         echo "POSTGRES_PORT=5432" >> .env
         echo "SECRET_KEY=test_secret_key" >> .env
+        echo "KAFKA_BOOTSTRAP_SERVERS=localhost:9093" >> .env
+        echo "REDIS_URL=redis://localhost:6379/0" >> .env
 
     - name: Run linting (Ruff)
       run: |
         ruff check .
 
     - name: Run tests with pytest
+      env:
+        CI: "true"
       run: |
         pytest -v --cov=. --cov-report=term-missing
